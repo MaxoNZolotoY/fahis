@@ -1,0 +1,3 @@
+# Papyrus-исходники редактируются и компилируются в Windows
+*.psc text eol=crlf
+*.md  text eol=lf
