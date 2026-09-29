@@ -4,7 +4,7 @@
 
 Формат: ESL-флагированный ESP в стиле Creation Club. **Без SKSE**, только ванильный движок и Papyrus.
 
-> **PlayStation 5.** На PlayStation моды не могут содержать скрипты, поэтому эта версия там не работает. Для PS5 есть отдельная спецификация без скриптов, которая заодно решает проблему Колдовства: [`docs/SPEC_PS5.md`](docs/SPEC_PS5.md).
+> **PlayStation 5.** На PlayStation моды не могут содержать скрипты, поэтому эта версия там не работает. Для PS5 есть отдельная версия без скриптов, которая заодно решает проблему Колдовства: спецификация [`docs/SPEC_PS5.md`](docs/SPEC_PS5.md), генератор плагина и инструкция по сборке и публикации [`docs/BUILD_PS5.md`](docs/BUILD_PS5.md).
 
 ## Состав
 
@@ -22,8 +22,12 @@
 ```
 docs/CK_GUIDE.md          — пошаговое руководство по сборке в Creation Kit (ПК/Xbox)
 docs/SPEC_PS5.md          — спецификация версии для PS5 без скриптов (Разрушение + Колдовство)
+docs/BUILD_PS5.md         — сборка на ПК, тесты и публикация для PS5
 Source/Scripts/*.psc      — исходники Papyrus (копировать в Data\Source\Scripts\), только ПК/Xbox
 tools/scaling_model.py    — численная модель: множители и ожидаемый результат для SPEC_PS5
+tools/sync_xedit_values.py — переносит числа из модели в генератор
+tools/xedit/FHS_BuildMagicScaling.pas — генератор плагина FHS_MagicScaling.esp для SSEEdit
+tools/xedit/check/        — проверки генератора без игры (FormID, синтаксис, модель xEdit)
 ```
 
 | Скрипт | Где висит | Что делает |
@@ -37,7 +41,7 @@ tools/scaling_model.py    — численная модель: множител�
 ## С чего начать
 
 - ПК или Xbox: открой [`docs/CK_GUIDE.md`](docs/CK_GUIDE.md) и иди по разделам по порядку.
-- PS5: начни с [`docs/SPEC_PS5.md`](docs/SPEC_PS5.md), в разделе 14 открытые вопросы.
+- PS5: что и зачем — [`docs/SPEC_PS5.md`](docs/SPEC_PS5.md), как собрать и загрузить — [`docs/BUILD_PS5.md`](docs/BUILD_PS5.md).
 
 ## Статус
 
@@ -47,4 +51,6 @@ tools/scaling_model.py    — численная модель: множител�
 - [ ] Тест в игре
 - [ ] ESL-флаг и упаковка BSA
 - [x] Спецификация версии для PS5
-- [ ] Генератор плагина для PS5 (скрипт SSEEdit)
+- [x] Генератор плагина для PS5 (скрипт SSEEdit) и проверки без игры
+- [ ] Сборка PS5-плагина в SSEEdit и тест на ПК
+- [ ] Публикация для PlayStation

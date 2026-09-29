@@ -1,3 +1,7 @@
 # Papyrus-исходники редактируются и компилируются в Windows
 *.psc text eol=crlf
 *.md  text eol=lf
+# Генератор для SSEEdit и проверки: LF (xEdit читает и LF, а sed в check.sh ждёт LF)
+*.pas text eol=lf
+*.sh  text eol=lf
+*.py  text eol=lf
