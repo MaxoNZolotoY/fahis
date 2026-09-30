@@ -28,7 +28,7 @@ Skyrim Special Edition / Anniversary Edition, без SKSE, ESL-плагин в �
 
 ## 1. Подготовка
 
-1. **Creation Kit.** В Steam: *Библиотека → Инструменты → Skyrim Special Edition: Creation Kit*. При первом запуске CK предложит распаковать `Scripts.zip`: соглашайся. Исходники ванильных скриптов окажутся в `Data\Source\Scripts\`, без них скрипты не скомпилируются.
+1. **Creation Kit.** Бесплатное приложение Steam [*Skyrim Special Edition: Creation Kit*](https://store.steampowered.com/app/1946180/), в *Библиотеке → Программы*. Версия из *Инструментов* сделана для игры до 1.6.1130 и с текущей не запускается. При первом запуске CK предложит распаковать `Scripts.zip`: соглашайся. Исходники ванильных скриптов окажутся в `Data\Source\Scripts\`, без них скрипты не скомпилируются.
 2. **Скрипты мода.** Скопируй все `.psc` из папки репозитория `Source/Scripts/` в `…\Skyrim Special Edition\Data\Source\Scripts\`.
 3. **Новый плагин.** *File → Data…* → отметь `Skyrim.esm` и `Update.esm` → OK. После первой правки: *File → Save* → `FHS_Destruction.esp`. Все используемые ванильные записи лежат в `Skyrim.esm`, DLC не нужны.
 4. **Как копировать ванильные записи.** Открой запись, поменяй **EditorID**, нажми OK. CK спросит, создать ли новый объект (*Create new object?*). Отвечай **«Да»**. Если ответить «Нет», ты переименуешь ванильную запись: это правка оригинала и источник конфликтов. Проверять себя удобно в *File → Data → Details*: в плагине должны быть только записи `FHS_*` и одна правка `AVDestruction` из раздела 5.
