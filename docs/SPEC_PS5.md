@@ -279,7 +279,7 @@ FHS_CoreQuest  (Start Game Enabled)
 | **Mod Attack Damage** | Multiply Value `×r(P)` | — |
 | **Mod Spell Magnitude** | Multiply Value `×r(P)` | — (атронахи бьют заклинаниями) |
 | **Mod Incoming Damage** | Multiply Value `×1/r(P)` | — |
-| **Mod Incoming Spell Magnitude** | Multiply Value `×1/r(P)` | вкладка *Spell*: MagicDamageFire OR Frost OR Shock OR MagicVampireDrain. Номер вкладки генератор берёт из ванильного перка Блока `ElementalProtection`, который использует ту же точку входа. Если не найдёт — ослабляет все входящие заклинания и пишет об этом WARNING |
+| **Mod Incoming Spell Magnitude** | Multiply Value `×1/r(P)` | вкладка *Spell*: MagicDamageFire OR Frost OR Shock OR MagicVampireDrain. У этой точки входа две вкладки: *Perk Owner* (0) и *Spell* (1) — так по Creation Kit и по числу вкладок в ванильном перке Блока `ElementalProtection`. Генератор пишет в журнал, как устроены условия этого перка, и берёт номер вкладки из него, если найдёт там условие на заклинание |
 
 Условия каждой записи, вкладка *Perk Owner*, Run On = Subject, если не сказано иное:
 

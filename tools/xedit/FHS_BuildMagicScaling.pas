@@ -391,8 +391,9 @@ begin
   SetEditorID(Result, edid);
 end;
 
-// Новый элемент массива. Если массива ещё нет, берём элемент, который xEdit
-// создаёт вместе с массивом, иначе добавляем в конец.
+// Новый элемент массива, который лежит прямо в записи (Effects, Aliases, Perks).
+// Если массива ещё нет, берём элемент, который xEdit создаёт вместе с массивом,
+// иначе добавляем в конец.
 function NewArrayChild(parent: IInterface; arrayName: string): IInterface;
 var
   arr: IInterface;
@@ -406,6 +407,66 @@ begin
     end;
   end;
   Result := ElementAssign(arr, HighInteger, nil, False);
+end;
+
+// Массив arrayName внутри вложенной структуры parent (запись перка, эффект
+// заклинания). Внутри такой структуры SSEEdit 4.1.5 умеет Add только по
+// сигнатуре, а массив структур так не создаётся (xEdit падает на Assert).
+// Поэтому создаём его через ElementAssign по номеру члена в определении
+// записи и сверяем имя того, что получилось. xEdit создаёт массив сразу
+// с одним пустым элементом.
+function InnerArray(parent: IInterface; arrayName: string; memberIndex: Integer): IInterface;
+begin
+  Result := ElementByName(parent, arrayName);
+  if Assigned(Result) then
+    Exit;
+  Result := ElementAssign(parent, memberIndex, nil, False);
+  if Assigned(Result) then
+    if not SameText(Name(Result), arrayName) then begin
+      Err('unexpected record layout: member ' + IntToStr(memberIndex) + ' is "' + Name(Result)
+        + '", expected "' + arrayName + '"');
+      Result := nil;
+      Exit;
+    end;
+  if not Assigned(Result) then
+    Err('can not create ' + arrayName + ' in ' + EditorID(ContainingMainRecord(parent)));
+end;
+
+// Число с плавающей точкой в подзапись. В SSEEdit 4.1.5 значение подзаписи-
+// объединения лежит во вложенном поле (EPFD - Data -> Float), и писать надо
+// в него. Записанное значение читается обратно и сверяется.
+function WriteFloat(sub: IInterface; value: Double; what: string): Boolean;
+var
+  el: IInterface;
+  v: Variant;
+  d: Double;
+begin
+  Result := False;
+  if not Assigned(sub) then begin
+    Err(what + ': no element to write to');
+    Exit;
+  end;
+  el := sub;
+  if ElementCount(sub) > 0 then
+    el := ElementByIndex(sub, 0);
+  SetNativeValue(el, value);
+  v := GetNativeValue(el);
+  if (VarType(v) = 0) or (VarType(v) = 1) then     // varEmpty, varNull
+    d := 1000
+  else
+    d := v - value;
+  Result := (d < 0.0005) and (d > -0.0005);
+  if not Result then
+    Err(what + ': value ' + FloatToStr(value) + ' was not written, got "' + GetEditValue(el) + '"');
+end;
+
+// Имя поля, которое в разных версиях xEdit называется по-разному.
+function FieldName(parent: IInterface; name1: string; name2: string): string;
+begin
+  Result := name1;
+  if not Assigned(ElementByName(parent, name1)) then
+    if Assigned(ElementByName(parent, name2)) then
+      Result := name2;
 end;
 
 function SetText(rec: IInterface; sig: string; text: string): IInterface;
@@ -458,9 +519,13 @@ var
   conds, cond, ctda: IInterface;
   t: Integer;
 begin
+  // Во вкладке перка массив условий есть всегда, в эффекте заклинания
+  // (EFID, EFIT, Conditions) его создаём.
   conds := ElementByName(parent, 'Conditions');
   if not Assigned(conds) then
-    conds := Add(parent, 'Conditions', True);
+    conds := InnerArray(parent, 'Conditions', 2);
+  if not Assigned(conds) then
+    Exit;
   cond := nil;
   if ElementCount(conds) = 1 then
     if IsEmptyCondition(ElementByIndex(conds, 0)) then
@@ -490,8 +555,19 @@ begin
     SetElementEditValues(ctda, 'Run On', 'Subject');
   SetElementNativeValues(ctda, 'Parameter #3', -1);
 
+  // Прочитать обратно: xEdit молча пропускает запись в поле, которого нет.
   if not SameText(GetElementEditValues(ctda, 'Function'), func) then
     Err('condition function not set: ' + func);
+  if GetElementNativeValues(ctda, 'Type') <> t then
+    Err('condition type not set: ' + func);
+  if GetElementNativeValues(ctda, 'Comparison Value') <> cmpValue then
+    Err('condition value not set: ' + func);
+  if param1 <> '' then
+    if GetElementNativeValues(ctda, 'Parameter #1') = 0 then
+      Err('condition parameter not set: ' + func + ' ' + param1);
+  if onPlayer then
+    if GetElementNativeValues(ctda, 'Reference') = 0 then
+      Err('condition reference not set: ' + func);
 end;
 
 //============================================================================
@@ -521,43 +597,70 @@ begin
   SetElementEditValues(e, 'DATA\Entry Point\Function', 'Multiply Value');
   SetElementNativeValues(e, 'DATA\Entry Point\Perk Condition Tab Count', tabCount);
 
+  // Параметры функции xEdit создаёт при смене типа. Если их нет, Add по
+  // сигнатуре EPFT создаёт всю структуру Function Parameters.
   fp := ElementByName(e, 'Function Parameters');
-  if not Assigned(fp) then
-    fp := Add(e, 'Function Parameters', True);
+  if not Assigned(fp) then begin
+    Add(e, 'EPFT', True);
+    fp := ElementByName(e, 'Function Parameters');
+  end;
+  if not Assigned(fp) then begin
+    Err('can not create function parameters in ' + EditorID(perk));
+    Exit;
+  end;
   epft := EnsureSub(fp, 'EPFT');
   SetNativeValue(epft, 1);                              // Float
-  epfd := ElementBySignature(fp, 'EPFD');
+  if GetNativeValue(epft) <> 1 then
+    Err('EPFT not set in ' + EditorID(perk));
+  epfd := FindSub(fp, 'EPFD', 0);
   if not Assigned(epfd) then
     epfd := Add(fp, 'EPFD', True);
-  SetNativeValue(epfd, valueMilli / 1000);
+  WriteFloat(epfd, valueMilli / 1000, EditorID(perk) + ' ' + ep + ' multiplier');
 
   if not SameText(GetElementEditValues(e, 'DATA\Entry Point\Entry Point'), ep) then
     Err('entry point not set: ' + ep);
+  if not SameText(GetElementEditValues(e, 'DATA\Entry Point\Function'), 'Multiply Value') then
+    Err('entry point function not set: ' + ep);
+  if GetElementNativeValues(e, 'DATA\Entry Point\Perk Condition Tab Count') <> tabCount then
+    Err('tab count not set: ' + ep);
   Result := e;
 end;
 
 // Вкладка условий perk entry (0 = Perk Owner, дальше зависит от точки входа).
 function CondTab(entry: IInterface; tabIndex: Integer): IInterface;
 var
-  pcs, pc, prkc: IInterface;
+  pcs, pc, prkc, conds, unused: IInterface;
   i: Integer;
 begin
-  pcs := ElementByName(entry, 'Perk Conditions');
-  if Assigned(pcs) then
-    for i := 0 to ElementCount(pcs) - 1 do begin
-      pc := ElementByIndex(pcs, i);
-      prkc := FindSub(pc, 'PRKC', 0);
-      if Assigned(prkc) then
-        if GetNativeValue(prkc) = tabIndex then begin
-          Result := pc;
-          Exit;
-        end;
-    end;
-  pc := NewArrayChild(entry, 'Perk Conditions');
+  Result := nil;
+  unused := nil;
+  // Perk Conditions — третий член записи перка (PRKE, DATA, Perk Conditions, ...).
+  pcs := InnerArray(entry, 'Perk Conditions', 2);
+  if not Assigned(pcs) then
+    Exit;
+  for i := 0 to ElementCount(pcs) - 1 do begin
+    pc := ElementByIndex(pcs, i);
+    prkc := FindSub(pc, 'PRKC', 0);
+    conds := ElementByName(pc, 'Conditions');
+    if (ElementCount(conds) = 1) and IsEmptyCondition(ElementByIndex(conds, 0)) then
+      unused := pc                  // пустая вкладка, которую xEdit создал вместе с массивом
+    else if Assigned(prkc) then
+      if GetNativeValue(prkc) = tabIndex then begin
+        Result := pc;
+        Exit;
+      end;
+  end;
+  pc := unused;
+  if not Assigned(pc) then
+    pc := ElementAssign(pcs, HighInteger, nil, False);
   prkc := EnsureSub(pc, 'PRKC');
-  if not Assigned(prkc) then
+  if not Assigned(prkc) then begin
     Err('can not create PRKC in ' + EditorID(ContainingMainRecord(entry)));
+    Exit;
+  end;
   SetNativeValue(prkc, tabIndex);
+  if GetNativeValue(prkc) <> tabIndex then
+    Err('PRKC not set in ' + EditorID(ContainingMainRecord(entry)));
   Result := pc;
 end;
 
@@ -651,56 +754,94 @@ begin
     Warn(ep + ': no vanilla template found, using tab count ' + IntToStr(fallback));
 end;
 
+// Строка журнала с устройством ванильной записи перка: вкладки и условия.
+// По ней видно, на какой вкладке игра ждёт условия на заклинание.
+procedure DumpTemplate(perkName: string; entry: IInterface);
+var
+  pcs, pc, conds, ctda: IInterface;
+  i, j: Integer;
+  s, p: string;
+begin
+  if not Assigned(entry) then
+    Exit;
+  s := perkName + ' / ' + GetElementEditValues(entry, 'DATA\Entry Point\Entry Point')
+    + ': tabs ' + GetElementEditValues(entry, 'DATA\Entry Point\Perk Condition Tab Count');
+  pcs := ElementByName(entry, 'Perk Conditions');
+  for i := 0 to ElementCount(pcs) - 1 do begin
+    pc := ElementByIndex(pcs, i);
+    s := s + '; tab ' + GetElementEditValues(pc, 'PRKC') + ':';
+    conds := ElementByName(pc, 'Conditions');
+    for j := 0 to ElementCount(conds) - 1 do begin
+      ctda := ElementBySignature(ElementByIndex(conds, j), 'CTDA');
+      s := s + ' ' + GetElementEditValues(ctda, 'Function');
+      p := GetElementEditValues(ctda, 'Parameter #1');
+      if p <> '' then
+        s := s + '(' + p + ')';
+      s := s + ' [' + GetElementEditValues(ctda, 'Type') + ' ' + GetElementEditValues(ctda, 'Comparison Value')
+        + ' on ' + GetElementEditValues(ctda, 'Run On') + ']';
+    end;
+  end;
+  Info('vanilla ' + s);
+end;
+
+// Вкладка, на которой в ванильной записи стоят условия на заклинание.
+function SpellTabOf(entry: IInterface): Integer;
+begin
+  Result := TabOfFunction(entry, 'EPMagic_SpellHasKeyword');
+  if Result < 0 then
+    Result := TabOfFunction(entry, 'EPMagic_SpellHasSkill');
+end;
+
 procedure DetectTabs;
 var
   e: IInterface;
   t: Integer;
 begin
-  // Значения по умолчанию из Creation Kit:
-  //   Mod Spell Magnitude:          Perk Owner, Spell
+  // Вкладки условий по Creation Kit (число вкладок записано в каждой записи перка):
+  //   Mod Spell Magnitude:          Perk Owner, Spell, Target
   //   Mod Attack Damage:            Perk Owner, Weapon, Target
   //   Mod Incoming Damage:          Perk Owner, Attacker, Attacker Weapon
-  //   Mod Incoming Spell Magnitude: Perk Owner, Caster, Spell
+  //   Mod Incoming Spell Magnitude: Perk Owner, Spell
+  // Номера вкладок сверяются с ванильными перками ниже.
   gSpellTabSpellMag := 1;
   gWeaponTabAttack := 1;
-  gSpellTabIncomingSpell := 2;
+  gSpellTabIncomingSpell := 1;
 
   // AugmentedFlames: Mod Spell Magnitude с условиями по ключевым словам заклинания
   e := FindTemplateEntry(BaseRec('Skyrim.esm', $0581E7, 'AugmentedFlames'), cEPSpellMag);
-  gTabsSpellMag := TemplateTabCount(e, cEPSpellMag, 2);
-  if Assigned(e) then begin
-    t := TabOfFunction(e, 'EPMagic_SpellHasKeyword');
-    if (t >= 0) and (t <> gSpellTabSpellMag) then begin
-      Warn(cEPSpellMag + ': spell conditions are on tab ' + IntToStr(t) + ' in vanilla; using it');
-      gSpellTabSpellMag := t;
-    end;
+  DumpTemplate('AugmentedFlames', e);
+  gTabsSpellMag := TemplateTabCount(e, cEPSpellMag, 3);
+  t := SpellTabOf(e);
+  if (t >= 0) and (t <> gSpellTabSpellMag) then begin
+    Warn(cEPSpellMag + ': spell conditions are on tab ' + IntToStr(t) + ' in vanilla; using it');
+    gSpellTabSpellMag := t;
   end;
 
   // Armsman00: Mod Attack Damage
   e := FindTemplateEntry(BaseRec('Skyrim.esm', $0BABE4, 'Armsman00'), cEPAttack);
+  DumpTemplate('Armsman00', e);
   gTabsAttack := TemplateTabCount(e, cEPAttack, 3);
 
   // crDragonResistNPCs или DragonhideSpellPerk: Mod Incoming Damage
   e := FindTemplateEntry(BaseRec('Skyrim.esm', $1046BD, 'crDragonResistNPCs'), cEPIncoming);
   if not Assigned(e) then
     e := FindTemplateEntry(BaseRec('Skyrim.esm', $109639, 'DragonhideSpellPerk'), cEPIncoming);
+  DumpTemplate('Mod Incoming Damage template', e);
   gTabsIncoming := TemplateTabCount(e, cEPIncoming, 3);
 
-  // ElementalProtection (Блок): Mod Incoming Spell Magnitude с ключевыми словами стихий
+  // ElementalProtection (Блок): Mod Incoming Spell Magnitude
   e := FindTemplateEntry(BaseRec('Skyrim.esm', $058F69, 'ElementalProtection'), cEPIncomingSpell);
-  gTabsIncomingSpell := TemplateTabCount(e, cEPIncomingSpell, 3);
-  if Assigned(e) then begin
-    t := TabOfFunction(e, 'EPMagic_SpellHasKeyword');
-    if t >= 0 then begin
-      if t <> gSpellTabIncomingSpell then
-        Warn(cEPIncomingSpell + ': spell conditions are on tab ' + IntToStr(t) + ' in vanilla; using it');
-      gSpellTabIncomingSpell := t;
-    end else begin
-      Warn(cEPIncomingSpell + ': spell tab not confirmed by vanilla, incoming spell reduction applies to all spells');
-      gSpellTabIncomingSpell := -1;
-    end;
-  end else
+  DumpTemplate('ElementalProtection', e);
+  gTabsIncomingSpell := TemplateTabCount(e, cEPIncomingSpell, 2);
+  t := SpellTabOf(e);
+  if (t >= 0) and (t <> gSpellTabIncomingSpell) then begin
+    Warn(cEPIncomingSpell + ': spell conditions are on tab ' + IntToStr(t) + ' in vanilla; using it');
+    gSpellTabIncomingSpell := t;
+  end;
+  if gSpellTabIncomingSpell >= gTabsIncomingSpell then begin
+    Warn(cEPIncomingSpell + ': no Spell tab, incoming spell reduction applies to all spells');
     gSpellTabIncomingSpell := -1;
+  end;
 
   Info('condition tabs: SpellMag=' + IntToStr(gTabsSpellMag) + '/spell ' + IntToStr(gSpellTabSpellMag)
     + ', Attack=' + IntToStr(gTabsAttack) + '/weapon ' + IntToStr(gWeaponTabAttack)
@@ -866,32 +1007,70 @@ begin
   Info('summon perk: ' + IntToStr(gPriority) + ' entries');
 end;
 
+// Подзапись DATA магического эффекта. В SSEEdit 4.1.5 она лежит внутри
+// структуры "Magic Effect Data", поэтому путь 'DATA\Flags' от записи
+// не работает. Add по сигнатуре DATA создаёт эту структуру вместе с DATA.
+function MgefData(mgef: IInterface): IInterface;
+begin
+  Result := FindSub(mgef, 'DATA', 1);
+  if Assigned(Result) then
+    Exit;
+  Add(mgef, 'DATA', True);
+  Result := FindSub(mgef, 'DATA', 1);
+  if not Assigned(Result) then
+    Err('can not create DATA in ' + EditorID(mgef));
+end;
+
+// Поле архетипа: в SSEEdit 4.1.5 оно называется "Archtype".
+function ArchetypeField(data: IInterface): string;
+begin
+  Result := FieldName(data, 'Archtype', 'Archetype');
+end;
+
+procedure SetDataInt(data: IInterface; field: string; value: Integer);
+begin
+  SetElementNativeValues(data, field, value);
+  if GetElementNativeValues(data, field) <> value then
+    Err(EditorID(ContainingMainRecord(data)) + ': ' + field + ' not set');
+end;
+
 // Магический эффект для способности (Constant Effect, Self).
 function NewEffect(edid: string; fullName: string; desc: string; archetype: Integer; actorValue: Integer; flags: Integer): IInterface;
+var
+  data: IInterface;
 begin
   Result := NewRecord('MGEF', edid);
   SetText(Result, 'FULL', fullName);
   if desc <> '' then
     SetText(Result, 'DNAM', desc);
-  SetElementNativeValues(Result, 'DATA\Flags', flags);
-  SetElementNativeValues(Result, 'DATA\Base Cost', 0);
-  SetElementNativeValues(Result, 'DATA\Magic Skill', -1);
-  SetElementNativeValues(Result, 'DATA\Resist Value', -1);
-  SetElementNativeValues(Result, 'DATA\Archetype', archetype);
-  SetElementNativeValues(Result, 'DATA\Actor Value', actorValue);
-  SetElementNativeValues(Result, 'DATA\Casting Type', 0);   // Constant Effect
-  SetElementNativeValues(Result, 'DATA\Delivery', 0);       // Self
-  SetElementNativeValues(Result, 'DATA\Second Actor Value', -1);
-  SetElementNativeValues(Result, 'DATA\Skill Usage Multiplier', 0);
+  data := MgefData(Result);
+  if not Assigned(data) then
+    Exit;
+  // Архетип первым: при его смене xEdit сбрасывает Actor Value и связанные поля.
+  SetDataInt(data, ArchetypeField(data), archetype);
+  SetDataInt(data, 'Actor Value', actorValue);
+  SetDataInt(data, 'Flags', flags);
+  SetDataInt(data, 'Magic Skill', -1);
+  SetDataInt(data, 'Resist Value', -1);
+  SetDataInt(data, 'Casting Type', 0);         // Constant Effect
+  SetDataInt(data, 'Delivery', 0);             // Self
+  SetDataInt(data, 'Second Actor Value', -1);
+  SetElementNativeValues(data, 'Base Cost', 0);
+  SetElementNativeValues(data, 'Skill Usage Multiplier', 0);
 end;
 
 procedure BuildEffects;
+var
+  el: IInterface;
 begin
   // Носитель перка: Value Modifier на Health с магнитудой 0 ничего не меняет,
   // а поле Perk to Apply выдаёт игроку скрытый перк, пока действует эффект.
   gCarrier := NewEffect('FHS_AttunementCarrier', 'FHS Attunement', '',
     0, cAVHealth, cFlagHideInUI + cFlagNoMagnitude + cFlagNoArea + cFlagNoDuration);
-  SetElementEditValues(gCarrier, 'DATA\Perk to Apply', HexOf(gPlayerPerk));
+  el := MgefData(gCarrier);
+  SetElementEditValues(el, 'Perk to Apply', HexOf(gPlayerPerk));
+  if not SameText(EditorID(LinksTo(ElementByName(el, 'Perk to Apply'))), EditorID(gPlayerPerk)) then
+    Err(EditorID(gCarrier) + ': Perk to Apply not set');
 
   // Строки в «Активных эффектах». Архетип Script без скрипта ничего не делает.
   gDisplayResonance := NewEffect('FHS_DisplayResonance', 'Magic Resonance',
@@ -941,19 +1120,22 @@ end;
 procedure BuildAbility;
 var
   i, first: Integer;
-  eff: IInterface;
+  eff, spit: IInterface;
 begin
   gAbility := NewRecord('SPEL', 'FHS_AttunementAbility');
   SetText(gAbility, 'FULL', 'Magic Resonance');
   SetText(gAbility, 'DESC', '');
-  SetElementNativeValues(gAbility, 'SPIT\Base Cost', 0);
-  SetElementNativeValues(gAbility, 'SPIT\Flags', 1);        // Manual Cost Calc
-  SetElementEditValues(gAbility, 'SPIT\Type', 'Ability');
-  SetElementNativeValues(gAbility, 'SPIT\Charge Time', 0);
-  SetElementNativeValues(gAbility, 'SPIT\Cast Type', 0);    // Constant Effect
-  SetElementNativeValues(gAbility, 'SPIT\Delivery', 0);     // Self
-  SetElementNativeValues(gAbility, 'SPIT\Cast Duration', 0);
-  SetElementNativeValues(gAbility, 'SPIT\Range', 0);
+  spit := EnsureSub(gAbility, 'SPIT');
+  SetElementNativeValues(spit, 'Base Cost', 0);
+  SetDataInt(spit, 'Flags', 1);                              // Manual Cost Calc
+  SetElementEditValues(spit, 'Type', 'Ability');
+  SetElementNativeValues(spit, 'Charge Time', 0);
+  SetDataInt(spit, 'Cast Type', 0);                          // Constant Effect
+  SetDataInt(spit, FieldName(spit, 'Target Type', 'Delivery'), 0);   // Self
+  SetElementNativeValues(spit, 'Cast Duration', 0);
+  SetElementNativeValues(spit, 'Range', 0);
+  if not SameText(GetElementEditValues(spit, 'Type'), 'Ability') then
+    Err(EditorID(gAbility) + ': spell type is not Ability');
 
   AddSpellEffect(gAbility, gCarrier, 0);
 
@@ -978,13 +1160,17 @@ end;
 // Квест с алиасом игрока, который раздаёт способность без скриптов.
 procedure BuildQuest;
 var
-  alias, alfr, el: IInterface;
+  alias, alfr, spells, el: IInterface;
 begin
   gQuest := NewRecord('QUST', 'FHS_CoreQuest');
   SetText(gQuest, 'FULL', 'FHS Magic Scaling');
   SetElementNativeValues(gQuest, 'DNAM\Flags', 1);      // Start Game Enabled
   SetElementNativeValues(gQuest, 'DNAM\Priority', 50);
+  if GetElementNativeValues(gQuest, 'DNAM\Flags') <> 1 then
+    Err('quest is not Start Game Enabled');
 
+  // Алиас ссылки (Reference Alias). xEdit создаёт его вместе с массивом
+  // сразу с ALST, ALID, FNAM (флаги 0) и ALED.
   alias := NewArrayChild(gQuest, 'Aliases');
   if not Assigned(alias) then begin
     Err('can not create quest alias');
@@ -992,7 +1178,6 @@ begin
   end;
   SetElementNativeValues(alias, 'ALST', 0);
   SetElementEditValues(alias, 'ALID', 'Player');
-  SetElementNativeValues(alias, 'FNAM', 0);
   alfr := EnsureSub(alias, 'ALFR');
   if not Assigned(alfr) then begin
     Err('can not create ALFR (alias reference)');
@@ -1000,17 +1185,33 @@ begin
   end;
   SetEditValue(alfr, cPlayerRef);
 
-  el := NewArrayChild(alias, 'Alias Spells');
+  // Alias Spells внутри алиаса создаётся через Add по сигнатуре ALSP:
+  // xEdit создаёт массив с одним пустым элементом и возвращает массив.
+  spells := ElementByName(alias, 'Alias Spells');
+  if not Assigned(spells) then begin
+    Add(alias, 'ALSP', True);
+    spells := ElementByName(alias, 'Alias Spells');
+  end;
+  el := nil;
+  if ElementCount(spells) = 1 then
+    if GetNativeValue(ElementByIndex(spells, 0)) = 0 then
+      el := ElementByIndex(spells, 0);
+  if not Assigned(el) then
+    el := ElementAssign(spells, HighInteger, nil, False);
   SetEditValue(el, HexOf(gAbility));
 
   SetElementNativeValues(gQuest, 'ANAM', 1);
 
+  if GetElementNativeValues(alias, 'ALST') <> 0 then
+    Err('quest alias id not set');
   if not SameText(GetElementEditValues(alias, 'ALID'), 'Player') then
     Err('quest alias name not set');
   if Pos('00000014', GetEditValue(alfr)) = 0 then
     Err('quest alias is not filled with PlayerRef: ' + GetEditValue(alfr));
   if not SameText(EditorID(LinksTo(el)), EditorID(gAbility)) then
     Err('quest alias does not give ' + EditorID(gAbility));
+  if GetElementNativeValues(gQuest, 'ANAM') <> 1 then
+    Err('quest next alias id not set');
 end;
 
 //============================================================================
@@ -1046,19 +1247,41 @@ begin
   end;
 end;
 
+// Правка записи в нашем плагине: уже созданная или новая копия последней
+// версии из базовых мастер-файлов.
 function OverrideInFile(rec: IInterface): IInterface;
 var
-  src: IInterface;
+  m, src: IInterface;
+  i: Integer;
 begin
+  m := MasterOrSelf(rec);
+  for i := 0 to OverrideCount(m) - 1 do
+    if SameText(GetFileName(GetFile(OverrideByIndex(m, i))), cPluginName) then begin
+      Result := OverrideByIndex(m, i);
+      Exit;
+    end;
   src := BaseWinner(rec);
-  if SameText(GetFileName(GetFile(src)), cPluginName) then begin
-    Result := src;
-    Exit;
-  end;
   AddRequiredElementMasters(src, gFile, False, True);
   Result := wbCopyElementToFile(src, gFile, False, True);
   if not Assigned(Result) then
     Err('can not copy ' + EditorID(rec) + ' as override');
+end;
+
+// Счётчик (PRKZ, KSIZ) перед массивом в записи NPC.
+procedure SetCounter(npc: IInterface; sig: string; count: Integer);
+var
+  el: IInterface;
+begin
+  el := FindSub(npc, sig, 0);
+  if not Assigned(el) then
+    el := Add(npc, sig, True);
+  if not Assigned(el) then begin
+    Err(EditorID(npc) + ': can not create ' + sig);
+    Exit;
+  end;
+  SetNativeValue(el, count);
+  if GetNativeValue(el) <> count then
+    Err(EditorID(npc) + ': ' + sig + ' not set');
 end;
 
 function HasPerkEntry(npc: IInterface; perk: IInterface): Boolean;
@@ -1092,10 +1315,11 @@ begin
     el := NewArrayChild(npc, 'Perks');
   SetElementEditValues(el, 'Perk', HexOf(gSummonPerk));
   SetElementNativeValues(el, 'Rank', 0);
-  // Счётчик PRKZ xEdit пересчитывает сам; обновляем его, если он уже есть.
-  el := FindSub(npc, 'PRKZ', 0);
-  if Assigned(el) then
-    SetNativeValue(el, ElementCount(ElementByName(npc, 'Perks')));
+  if not HasPerkEntry(npc, gSummonPerk) then
+    Err(EditorID(npc) + ': perk not added');
+  // Игра читает перки NPC по счётчику PRKZ, поэтому он должен быть и совпадать
+  // с числом записей. Add возвращает существующий PRKZ или создаёт его.
+  SetCounter(npc, 'PRKZ', ElementCount(ElementByName(npc, 'Perks')));
 end;
 
 procedure AddKeywordToNpc(npc: IInterface; kwd: IInterface);
@@ -1125,10 +1349,9 @@ begin
   else
     k := ElementAssign(kwda, HighInteger, nil, False);
   SetEditValue(k, HexOf(kwd));
-  // Счётчик KSIZ xEdit пересчитывает сам; обновляем его, если он уже есть.
-  k := FindSub(npc, 'KSIZ', 1);
-  if Assigned(k) then
-    SetNativeValue(k, ElementCount(kwda));
+  if not SameText(EditorID(LinksTo(k)), EditorID(kwd)) then
+    Err(EditorID(npc) + ': keyword not added');
+  SetCounter(npc, 'KSIZ', ElementCount(kwda));
 end;
 
 procedure PatchSummon(fileName: string; objectId: Integer; edid: string; endgame: Boolean);
@@ -1195,27 +1418,31 @@ end;
 // Всё, чего нет в списке PatchSummons, попадёт в журнал как WARNING.
 procedure CheckSpell(fileName: string; objectId: Integer; edid: string);
 var
-  spell, effs, mgef, npc: IInterface;
-  i: Integer;
+  spell, effs, mgef, data, npc: IInterface;
+  i, found: Integer;
 begin
   spell := BaseRec(fileName, objectId, edid);
   if not Assigned(spell) then
     Exit;
   spell := BaseWinner(spell);
+  found := 0;
   effs := ElementByName(spell, 'Effects');
   for i := 0 to ElementCount(effs) - 1 do begin
     mgef := LinksTo(ElementBySignature(ElementByIndex(effs, i), 'EFID'));
     if not Assigned(mgef) then
       Continue;
-    mgef := BaseWinner(mgef);
-    if not SameText(GetElementEditValues(mgef, 'DATA\Archetype'), 'Summon Creature') then
+    data := FindSub(BaseWinner(mgef), 'DATA', 1);
+    if not SameText(GetElementEditValues(data, ArchetypeField(data)), 'Summon Creature') then
       Continue;
-    npc := LinksTo(ElementByPath(mgef, 'DATA\Assoc. Item'));
+    npc := LinksTo(ElementByName(data, 'Assoc. Item'));
     if not Assigned(npc) then
       Continue;
+    found := found + 1;
     if not HasPerkEntry(WinningOverride(DataSource(npc, 8)), gSummonPerk) then
       Warn(edid + ' summons ' + EditorID(npc) + ', which is not patched');
   end;
+  if found = 0 then
+    Warn(edid + ': no Summon Creature effect found, can not check it');
 end;
 
 procedure CheckSummonSpells;

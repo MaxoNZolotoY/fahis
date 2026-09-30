@@ -12,7 +12,7 @@
 |---|---|
 | Skyrim Special Edition на ПК (Steam), обновлённый | уже есть |
 | Creation Kit | Steam → Библиотека → Инструменты → *Skyrim Special Edition: Creation Kit* |
-| SSEEdit 4.1.5f или новее | [Nexus Mods — SSEEdit](https://www.nexusmods.com/skyrimspecialedition/mods/164?tab=files) или [GitHub — TES5Edit releases](https://github.com/TES5Edit/TES5Edit/releases/) |
+| SSEEdit 4.1.5f (генератор проверен под эту версию) | [Nexus Mods — SSEEdit](https://www.nexusmods.com/skyrimspecialedition/mods/164?tab=files) или [GitHub — TES5Edit releases](https://github.com/TES5Edit/TES5Edit/releases/) |
 | Аккаунт Bethesda.net | тот же, что привязан к PS5 |
 | Генератор | [`tools/xedit/FHS_BuildMagicScaling.pas`](../tools/xedit/FHS_BuildMagicScaling.pas) из этого репозитория |
 
@@ -33,11 +33,12 @@
 4. Правый клик по `Skyrim.esm` в дереве слева → *Apply Script…* → в списке выбери **FHS_BuildMagicScaling** → OK.
 5. Скрипт работает несколько секунд. В конце в *Messages* будет:
    ```
-   [FHS] errors: 0, warnings: …
+   [FHS] summons patched: 22, skipped: 0
+   [FHS] errors: 0, warnings: 0
    [FHS] DONE. Close SSEEdit and save FHS_MagicScaling.esp.
    ```
-   - Если есть строки `[FHS] ERROR`, **не сохраняй**. Скопируй всё содержимое вкладки *Messages* (Ctrl+A, Ctrl+C) и пришли мне.
-   - Строки `[FHS] WARNING` тоже пришли, даже если сборка прошла: по ним я сверю допущения спецификации. Например, строка `condition tabs: …` показывает, как устроены ванильные перки.
+   - Если есть строки `[FHS] ERROR` или скрипт остановился (`Aborted`), **не сохраняй**. Скопируй всё содержимое вкладки *Messages* (Ctrl+A, Ctrl+C) и пришли мне.
+   - Даже если сборка прошла, пришли мне строки `[FHS] vanilla …` и `[FHS] condition tabs: …`, а также все `[FHS] WARNING`. Строки `vanilla` показывают, как устроены условия ванильных перков (например, Блока `ElementalProtection`), и по ним я сверю допущения спецификации.
 6. Закрой SSEEdit. Он спросит, какие файлы сохранить: отметь `FHS_MagicScaling.esp` → OK. Файл появится в `…\Skyrim Special Edition\Data\`.
 
 Строки внутри плагина (названия эффектов и описания) на английском. Так они одинаково отображаются на ПК и на PS5 при любом языке игры: кириллица в плагине без файлов перевода могла бы превратиться в «кракозябры», а файлы перевода на PlayStation загрузить нельзя.
@@ -142,8 +143,8 @@ help FHS_ 4
 - что именно видно на PS5 (меню магии, «Активные эффекты»), если проблема только там.
 
 Проверки генератора без игры, которые я уже прогнал (описаны в [`tools/xedit/check/`](../tools/xedit/check/)):
-- все 46 ссылок на ванильные записи сверены с данными `Skyrim.esm`, `Dawnguard.esm`, `Dragonborn.esm`;
+- все ссылки на ванильные записи сверены с данными `Skyrim.esm`, `Dawnguard.esm`, `Dragonborn.esm`;
 - скрипт компилируется Free Pascal с заглушками API xEdit без предупреждений;
-- прогон на упрощённой модели xEdit проходит все проверки структуры плагина: 34 + 64 записи перков, условия и OR-флаги, множители, способность, квест, 22 правки призывов.
+- прогон на модели SSEEdit 4.1.5f проходит все проверки структуры плагина: 34 + 64 записи перков, условия, OR-флаги и параметры, множители, магические эффекты, способность, квест, 22 правки призывов со счётчиками. Модель собрана по исходникам 4.1.5f (определения записей, `Add`, пути, обработчики смены типа) и повторяет ошибку первой сборки `EPFD - Data can not be edited` на старой версии генератора.
 
-Эти проверки не заменяют запуск в настоящем SSEEdit: модель повторяет xEdit лишь приблизительно. Поэтому первая сборка — вместе, по логу.
+Эти проверки не заменяют запуск в настоящем SSEEdit: модель повторяет только то, что использует генератор. Поэтому сборка — вместе, по логу.

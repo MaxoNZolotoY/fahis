@@ -1,8 +1,8 @@
 #!/bin/sh
 # Проверка генератора без игры и без xEdit (нужен Free Pascal: apt install fp-compiler).
 #   1. Синтаксис: компиляция с заглушками API xEdit (xedit_stub.pas).
-#   2. Поведение: прогон с моделью xEdit в памяти (xedit_mock.pas) и проверка
-#      итоговой структуры плагина.
+#   2. Поведение: прогон с моделью SSEEdit 4.1.5f в памяти (xedit_mock.pas)
+#      и проверка итоговой структуры плагина.
 # Скрипт xEdit оформлен как "unit UserScript" без interface/implementation,
 # поэтому для компилятора он превращается в программу.
 set -e
