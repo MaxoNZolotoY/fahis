@@ -182,9 +182,10 @@ FHS_CoreQuest  (Start Game Enabled)
 | MGEF | `FHS_DisplayAbsoluteDestruction`, `FHS_DisplayAbsoluteConjuration` | строки бонусов мастера |
 | PERK | `FHS_Attunement` | скрытый перк игрока: модули D, C3, C4, E |
 | PERK | `FHS_SummonAttunement` | перк призывов: модули C1, C2 |
-| KYWD | `FHS_SummonEndgame` | метка «эндгейм-призыва» (растёт без потолка) |
-| FLST | `FHS_BoundWeapons` | призванное оружие |
-| NPC_ (правка) ×~22 | см. 7.1.4 | + перк `FHS_SummonAttunement`, 7 из них + ключевое слово |
+| FLST | `FHS_EndgameSummons` | «эндгейм-призывы» (растут без потолка): 6 рабов и лорд дремора |
+| KYWD | `FHS_BoundWeapon` | метка призванного оружия |
+| NPC_ (правка) ×~22 | см. 7.1.4 | + перк `FHS_SummonAttunement` |
+| WEAP (правка) ×9 | см. 7.4 | + ключевое слово `FHS_BoundWeapon` |
 
 Мастер-файлы: `Skyrim.esm`, `Update.esm`, `Dawnguard.esm`, `Dragonborn.esm`. Все четыре есть в PS5-версии SE/AE.
 
@@ -279,7 +280,7 @@ FHS_CoreQuest  (Start Game Enabled)
 | **Mod Attack Damage** | Multiply Value `×r(P)` | — |
 | **Mod Spell Magnitude** | Multiply Value `×r(P)` | — (атронахи бьют заклинаниями) |
 | **Mod Incoming Damage** | Multiply Value `×1/r(P)` | — |
-| **Mod Incoming Spell Magnitude** | Multiply Value `×1/r(P)` | вкладка *Spell*: MagicDamageFire OR Frost OR Shock OR MagicVampireDrain. У этой точки входа две вкладки: *Perk Owner* (0) и *Spell* (1) — так по Creation Kit и по числу вкладок в ванильном перке Блока `ElementalProtection`. Генератор пишет в журнал, как устроены условия этого перка, и берёт номер вкладки из него, если найдёт там условие на заклинание |
+| **Mod Incoming Spell Magnitude** | Multiply Value `×1/r(P)` | вкладка *Spell*: `HasKeyword` MagicDamageFire OR Frost OR Shock OR MagicVampireDrain. Так устроен ванильный перк Блока `ElementalProtection` с той же точкой входа: вкладки *Perk Owner* (0) и *Spell* (1), стихия проверяется через `HasKeyword` (не `EPMagic_SpellHasKeyword`, как у «Усиленного пламени»). Генератор берёт вкладку и функцию из этого перка |
 
 Условия каждой записи, вкладка *Perk Owner*, Run On = Subject, если не сказано иное:
 
@@ -287,7 +288,7 @@ FHS_CoreQuest  (Start Game Enabled)
 GetLevel  [Run On: Reference = PlayerRef]  >= P            AND
 GetLevel                                   <  P            AND
 GetLevel                                   >= ceil(P/2)    OR
-HasKeyword FHS_SummonEndgame               == 1            AND
+IsInList FHS_EndgameSummons               == 1            AND
 IsCommandedActor                           == 1            AND
 IsHostileToActor PlayerRef                 == 0
 ```
@@ -332,9 +333,13 @@ IsHostileToActor PlayerRef                 == 0
 
 Итог: атронахи из заклинаний «Ученик», «Адепт» и «Эксперт» уходят со сцены по очереди, как и задумано рангами. Лорд дремора и рабы остаются в игре до 80-го уровня. Ледяной атронах и раб остаются «танками», урона у них по-прежнему мало. «Усиленные» версии (перк «Сила стихий») сохраняют свои ванильные +50% поверх этого.
 
+> **Уровни в таблицах — оценка, их надо сверить.** Первая сборка показала уровни в самих записях призывов: огненный атронах 5 (усиленный 10), ледяной 16 (24), грозовой 30 (35), рабы 30 (усиленные 35), лорд дремора 46. Если эти значения верны, рабы стартуют с 30-го уровня, а не с 5–25, и их итоговый множитель меньше: при тех же пропорциях к врагам им нужно расти меньше. На работу перка это не влияет, потому что условия проверяют настоящий уровень призыва в игре. Генератор теперь выводит уровень и здоровье с учётом шаблонов (*Use Stats*). По этому журналу таблицы будут пересчитаны.
+
 #### 7.1.4. Какие записи NPC править
 
-Каждой записи добавить перк `FHS_SummonAttunement` (вкладка *Spell List → Perks*). Записям с пометкой «эндгейм» добавить ещё и ключевое слово `FHS_SummonEndgame` (*Keywords*). Если NPC берёт список заклинаний или ключевые слова из шаблона (*Template Data*: Use Spell List / Use Keywords), правь шаблон, а не саму запись.
+Каждой записи добавить перк `FHS_SummonAttunement` (вкладка *Spell List → Perks*). Если NPC берёт список заклинаний из шаблона (*Template Data*: Use Spell List), перк идёт в шаблон. По журналу сборки так устроены огненные атронахи (`EncAtronachFlame`), усиленный ледяной (`EncAtronachFrost`), лорд дремора (`EncDremoraMelee06`), горгулья, Искатели и страж пепла. Шаблоны общие с врагами, поэтому в условиях перка стоят `IsCommandedActor` и `IsHostileToActor`.
+
+Записи с пометкой «эндгейм» перечислены в списке `FHS_EndgameSummons`, условие `IsInList` проверяет базовую запись призыва. Ключевое слово для этого не годится: рабы берут ключевые слова из тех же общих шаблонов (*Use Keywords*), и метка досталась бы обычным атронахам.
 
 | NPC | FormID | Плагин | Заклинание | Эндгейм |
 |---|---|---|---|---|
@@ -383,9 +388,9 @@ IsHostileToActor PlayerRef                 == 0
 |---|---|---|---|---|---|---|---|
 | `B(L)` | ×1.00 | ×1.06 | ×1.19 | ×1.31 | ×1.44 | ×1.56 | ×1.69 |
 
-Реализация: 11 записей в `FHS_Attunement`, **Mod Attack Damage**, Multiply `B(L)`, *Perk Owner*: диапазон уровня, *Weapon*: `IsInList FHS_BoundWeapons == 1`.
+Реализация: 11 записей в `FHS_Attunement`, **Mod Attack Damage**, Multiply `B(L)`, *Perk Owner*: диапазон уровня, *Weapon*: `HasKeyword FHS_BoundWeapon == 1`. Ванильные перки проверяют оружие на вкладке *Weapon* именно через `HasKeyword` (`Armsman00`: `WeapTypeSword` и т. п.), поэтому призванное оружие получает своё ключевое слово.
 
-`FHS_BoundWeapons`: `BoundWeaponSword` 058F5F, `BoundWeaponSwordMystic` 0424F9, `BoundWeaponSwordRightHand` 0BA30E, `BoundWeaponBattleaxe` 058F5E, `BoundWeaponBattleaxeMystic` 0424F7, `BoundWeaponBow` 058F60, `BoundWeaponBowMystic` 0424F8, `DLC2BoundWeaponDagger` 01CE02, `DLC2BoundWeaponDaggerMystic` 01CE03.
+Ключевое слово `FHS_BoundWeapon` добавляется девяти записям: `BoundWeaponSword` 058F5F, `BoundWeaponSwordMystic` 0424F9, `BoundWeaponSwordRightHand` 0BA30E, `BoundWeaponBattleaxe` 058F5E, `BoundWeaponBattleaxeMystic` 0424F7, `BoundWeaponBow` 058F60, `BoundWeaponBowMystic` 0424F8, `DLC2BoundWeaponDagger` 01CE02, `DLC2BoundWeaponDaggerMystic` 01CE03.
 
 Проверка на PS5: урон призванного меча в инвентаре учитывает перки, как у ванильного перка Armsman.
 
@@ -424,7 +429,7 @@ IsHostileToActor PlayerRef                 == 0
 | Квест не выдаёт способность на старом сохранении | низкая | Тест T1. Запасной путь — том из 5.2 |
 | Бонус Разрушения усиливает зачарования на оружии (ванильный баг «Разрушительного пламени») | средняя | Условие `EPMagic_SpellHasSkill Destruction`, тест G8/T4. Если не поможет — добавить условие на тип экипировки |
 | Магнитуда у заклинаний призыва на что-то влияет | низкая | Тест T7. Если влияет — заменить условие C3 на список ключевых слов воскрешения и изгнания |
-| `IsInList` не работает на вкладке *Weapon* | низкая | Тест T6. Запасной вариант — цепочка `GetIsID` по 9 записям |
+| Другой мод правит записи призванного оружия, и метка `FHS_BoundWeapon` теряется | низкая | Тест T6. FHS ставить ниже такого мода |
 | Другой мод правит те же записи призывов (например, USSEP) | средняя | FHS ставить ниже в порядке загрузки. При необходимости — патч с USSEP в мастерах |
 | Установлен другой мод масштабирования магии | зависит | Бонусы сложатся. Оставить один |
 | Моды на дерево перков (Ordinator/Adamant и т. п.) | — | Не конфликтуют: дерево не правится (кроме варианта D2 с узлом) |

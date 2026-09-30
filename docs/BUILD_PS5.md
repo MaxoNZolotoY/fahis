@@ -33,12 +33,13 @@
 4. Правый клик по `Skyrim.esm` в дереве слева → *Apply Script…* → в списке выбери **FHS_BuildMagicScaling** → OK.
 5. Скрипт работает несколько секунд. В конце в *Messages* будет:
    ```
+   [FHS] bound weapons marked: 9
    [FHS] summons patched: 22, skipped: 0
    [FHS] errors: 0, warnings: 0
    [FHS] DONE. Close SSEEdit and save FHS_MagicScaling.esp.
    ```
    - Если есть строки `[FHS] ERROR` или скрипт остановился (`Aborted`), **не сохраняй**. Скопируй всё содержимое вкладки *Messages* (Ctrl+A, Ctrl+C) и пришли мне.
-   - Даже если сборка прошла, пришли мне строки `[FHS] vanilla …` и `[FHS] condition tabs: …`, а также все `[FHS] WARNING`. Строки `vanilla` показывают, как устроены условия ванильных перков (например, Блока `ElementalProtection`), и по ним я сверю допущения спецификации.
+   - Даже если сборка прошла, пришли мне весь журнал. Строки `[FHS] vanilla …` показывают, как устроены условия ванильных перков, а строки `summon patched: … (level …, health …)` — настоящие уровень и здоровье призывов. По ним я сверю таблицы спецификации.
 6. Закрой SSEEdit. Он спросит, какие файлы сохранить: отметь `FHS_MagicScaling.esp` → OK. Файл появится в `…\Skyrim Special Edition\Data\`.
 
 Строки внутри плагина (названия эффектов и описания) на английском. Так они одинаково отображаются на ПК и на PS5 при любом языке игры: кириллица в плагине без файлов перевода могла бы превратиться в «кракозябры», а файлы перевода на PlayStation загрузить нельзя.
@@ -49,7 +50,7 @@
 
 1. Запусти Creation Kit → *File → Data…* → отметь `FHS_MagicScaling.esp` → *Set as Active File* → OK.
 2. Если CK показывает предупреждения при загрузке, сделай скриншот. Ошибки в ванильных файлах, не связанные с `FHS_`, — это нормально.
-3. В *Object Window* введи в фильтр `FHS_` и убедись, что есть: квест `FHS_CoreQuest`, заклинание `FHS_AttunementAbility`, перки `FHS_Attunement` и `FHS_SummonAttunement`, 4 магических эффекта, ключевое слово и список.
+3. В *Object Window* введи в фильтр `FHS_` и убедись, что есть: квест `FHS_CoreQuest`, заклинание `FHS_AttunementAbility`, перки `FHS_Attunement` и `FHS_SummonAttunement`, 4 магических эффекта, ключевое слово `FHS_BoundWeapon` и список `FHS_EndgameSummons` (7 записей).
 4. Открой `FHS_Attunement` → в *Perk Entries* должно быть **34** записи, у `FHS_SummonAttunement` — **64**.
 5. Закрой CK **без сохранения**, ничего не меняя.
 

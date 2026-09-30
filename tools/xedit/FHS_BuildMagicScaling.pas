@@ -50,15 +50,17 @@ var
   gPerkDestrMaster, gPerkConjMaster: IInterface;
 
   // Новые записи
-  gKwdEndgame, gBoundList, gPlayerPerk, gSummonPerk: IInterface;
+  gKwdBound, gEndgameList, gPlayerPerk, gSummonPerk: IInterface;
   gCarrier, gDisplayResonance, gDisplayAbsDestr, gDisplayAbsConj: IInterface;
   gAbility, gQuest: IInterface;
 
   // Вкладки условий по точкам входа (уточняются по ванильным перкам)
   gTabsSpellMag, gTabsAttack, gTabsIncoming, gTabsIncomingSpell: Integer;
   gSpellTabSpellMag, gWeaponTabAttack, gSpellTabIncomingSpell: Integer;
+  // Функции проверки ключевого слова заклинания (как в ванильных перках)
+  gSpellMagKwdFunc, gIncomingKwdFunc, gFoundFunc: string;
 
-  gNpcPatched, gNpcSkipped: Integer;
+  gNpcPatched, gNpcSkipped, gWeaponsMarked: Integer;
 
 // BEGIN GENERATED VALUES (tools/sync_xedit_values.py, не править руками)
 
@@ -677,23 +679,27 @@ begin
     Cond(CondTab(entry, 0), 'GetLevel', '>=', first, '', False, False);
 end;
 
+// Огонь OR мороз OR молния OR истощение; func — функция проверки ключевого
+// слова, та же, что в ванильном перке с этой точкой входа.
+procedure ElementKeywords(pc: IInterface; func: string);
+begin
+  Cond(pc, func, '==', 1, HexOf(gKwdFire), False, True);
+  Cond(pc, func, '==', 1, HexOf(gKwdFrost), False, True);
+  Cond(pc, func, '==', 1, HexOf(gKwdShock), False, True);
+  Cond(pc, func, '==', 1, HexOf(gKwdDrain), False, False);
+end;
+
 // Заклинание Разрушения, наносящее урон огнём, морозом, молнией или истощением.
 procedure DestructionDamageSpell(pc: IInterface);
 begin
   Cond(pc, 'EPMagic_SpellHasSkill', '==', 1, 'Destruction', False, False);
-  Cond(pc, 'EPMagic_SpellHasKeyword', '==', 1, HexOf(gKwdFire), False, True);
-  Cond(pc, 'EPMagic_SpellHasKeyword', '==', 1, HexOf(gKwdFrost), False, True);
-  Cond(pc, 'EPMagic_SpellHasKeyword', '==', 1, HexOf(gKwdShock), False, True);
-  Cond(pc, 'EPMagic_SpellHasKeyword', '==', 1, HexOf(gKwdDrain), False, False);
+  ElementKeywords(pc, gSpellMagKwdFunc);
 end;
 
 // Входящий урон стихией (для Mod Incoming Spell Magnitude).
 procedure ElementalDamageSpell(pc: IInterface);
 begin
-  Cond(pc, 'EPMagic_SpellHasKeyword', '==', 1, HexOf(gKwdFire), False, True);
-  Cond(pc, 'EPMagic_SpellHasKeyword', '==', 1, HexOf(gKwdFrost), False, True);
-  Cond(pc, 'EPMagic_SpellHasKeyword', '==', 1, HexOf(gKwdShock), False, True);
-  Cond(pc, 'EPMagic_SpellHasKeyword', '==', 1, HexOf(gKwdDrain), False, False);
+  ElementKeywords(pc, gIncomingKwdFunc);
 end;
 
 //============================================================================
@@ -721,25 +727,27 @@ begin
   end;
 end;
 
-// Номер вкладки, на которой в ванильной записи стоит условие func. -1, если нет.
-function TabOfFunction(entry: IInterface; func: string): Integer;
+// Ищет в ванильной записи перка условие с параметром kwd (ключевое слово).
+// Возвращает номер вкладки или -1; имя функции условия кладёт в gFoundFunc.
+function TabOfParam(entry: IInterface; kwd: IInterface): Integer;
 var
-  pcs, pc, conds: IInterface;
+  pcs, pc, conds, ctda: IInterface;
   i, j: Integer;
 begin
   Result := -1;
+  gFoundFunc := '';
   pcs := ElementByName(entry, 'Perk Conditions');
-  if not Assigned(pcs) then
-    Exit;
   for i := 0 to ElementCount(pcs) - 1 do begin
     pc := ElementByIndex(pcs, i);
     conds := ElementByName(pc, 'Conditions');
-    if Assigned(conds) then
-      for j := 0 to ElementCount(conds) - 1 do
-        if SameText(GetElementEditValues(ElementByIndex(conds, j), 'CTDA\Function'), func) then begin
-          Result := GetElementNativeValues(pc, 'PRKC');
-          Exit;
-        end;
+    for j := 0 to ElementCount(conds) - 1 do begin
+      ctda := ElementBySignature(ElementByIndex(conds, j), 'CTDA');
+      if SameText(EditorID(LinksTo(ElementByName(ctda, 'Parameter #1'))), EditorID(kwd)) then begin
+        gFoundFunc := GetElementEditValues(ctda, 'Function');
+        Result := GetElementNativeValues(pc, 'PRKC');
+        Exit;
+      end;
+    end;
   end;
 end;
 
@@ -784,12 +792,15 @@ begin
   Info('vanilla ' + s);
 end;
 
-// Вкладка, на которой в ванильной записи стоят условия на заклинание.
-function SpellTabOf(entry: IInterface): Integer;
+// Все записи ванильного перка в журнал.
+procedure DumpPerk(perk: IInterface);
+var
+  effs: IInterface;
+  i: Integer;
 begin
-  Result := TabOfFunction(entry, 'EPMagic_SpellHasKeyword');
-  if Result < 0 then
-    Result := TabOfFunction(entry, 'EPMagic_SpellHasSkill');
+  effs := ElementByName(perk, 'Effects');
+  for i := 0 to ElementCount(effs) - 1 do
+    DumpTemplate(EditorID(perk), ElementByIndex(effs, i));
 end;
 
 procedure DetectTabs;
@@ -802,51 +813,62 @@ begin
   //   Mod Attack Damage:            Perk Owner, Weapon, Target
   //   Mod Incoming Damage:          Perk Owner, Attacker, Attacker Weapon
   //   Mod Incoming Spell Magnitude: Perk Owner, Spell
-  // Номера вкладок сверяются с ванильными перками ниже.
+  // Номер вкладки заклинания и функция проверки стихии берутся из ванильных
+  // перков: «Усиленное пламя» (EPMagic_SpellHasKeyword) и «Защита от стихий»
+  // Блока (HasKeyword).
   gSpellTabSpellMag := 1;
   gWeaponTabAttack := 1;
   gSpellTabIncomingSpell := 1;
+  gSpellMagKwdFunc := 'EPMagic_SpellHasKeyword';
+  gIncomingKwdFunc := 'HasKeyword';
 
-  // AugmentedFlames: Mod Spell Magnitude с условиями по ключевым словам заклинания
   e := FindTemplateEntry(BaseRec('Skyrim.esm', $0581E7, 'AugmentedFlames'), cEPSpellMag);
   DumpTemplate('AugmentedFlames', e);
   gTabsSpellMag := TemplateTabCount(e, cEPSpellMag, 3);
-  t := SpellTabOf(e);
-  if (t >= 0) and (t <> gSpellTabSpellMag) then begin
-    Warn(cEPSpellMag + ': spell conditions are on tab ' + IntToStr(t) + ' in vanilla; using it');
+  t := TabOfParam(e, gKwdFire);
+  if t >= 0 then begin
+    if t <> gSpellTabSpellMag then
+      Warn(cEPSpellMag + ': spell conditions are on tab ' + IntToStr(t) + ' in vanilla; using it');
     gSpellTabSpellMag := t;
-  end;
+    gSpellMagKwdFunc := gFoundFunc;
+  end else
+    Warn(cEPSpellMag + ': vanilla spell keyword condition not found, using ' + gSpellMagKwdFunc);
 
-  // Armsman00: Mod Attack Damage
   e := FindTemplateEntry(BaseRec('Skyrim.esm', $0BABE4, 'Armsman00'), cEPAttack);
   DumpTemplate('Armsman00', e);
   gTabsAttack := TemplateTabCount(e, cEPAttack, 3);
 
-  // crDragonResistNPCs или DragonhideSpellPerk: Mod Incoming Damage
   e := FindTemplateEntry(BaseRec('Skyrim.esm', $1046BD, 'crDragonResistNPCs'), cEPIncoming);
   if not Assigned(e) then
     e := FindTemplateEntry(BaseRec('Skyrim.esm', $109639, 'DragonhideSpellPerk'), cEPIncoming);
   DumpTemplate('Mod Incoming Damage template', e);
   gTabsIncoming := TemplateTabCount(e, cEPIncoming, 3);
 
-  // ElementalProtection (Блок): Mod Incoming Spell Magnitude
   e := FindTemplateEntry(BaseRec('Skyrim.esm', $058F69, 'ElementalProtection'), cEPIncomingSpell);
   DumpTemplate('ElementalProtection', e);
   gTabsIncomingSpell := TemplateTabCount(e, cEPIncomingSpell, 2);
-  t := SpellTabOf(e);
-  if (t >= 0) and (t <> gSpellTabIncomingSpell) then begin
-    Warn(cEPIncomingSpell + ': spell conditions are on tab ' + IntToStr(t) + ' in vanilla; using it');
+  t := TabOfParam(e, gKwdFire);
+  if t >= 0 then begin
+    if t <> gSpellTabIncomingSpell then
+      Warn(cEPIncomingSpell + ': spell conditions are on tab ' + IntToStr(t) + ' in vanilla; using it');
     gSpellTabIncomingSpell := t;
-  end;
+    gIncomingKwdFunc := gFoundFunc;
+  end else
+    Warn(cEPIncomingSpell + ': vanilla spell keyword condition not found, using ' + gIncomingKwdFunc);
   if gSpellTabIncomingSpell >= gTabsIncomingSpell then begin
     Warn(cEPIncomingSpell + ': no Spell tab, incoming spell reduction applies to all spells');
     gSpellTabIncomingSpell := -1;
   end;
 
+  // Для сверки: как ванильный перк «Новичок Разрушения» проверяет школу заклинания.
+  DumpPerk(BaseRec('Skyrim.esm', $0F2CA8, 'DestructionNovice00'));
+
   Info('condition tabs: SpellMag=' + IntToStr(gTabsSpellMag) + '/spell ' + IntToStr(gSpellTabSpellMag)
+    + ' ' + gSpellMagKwdFunc
     + ', Attack=' + IntToStr(gTabsAttack) + '/weapon ' + IntToStr(gWeaponTabAttack)
     + ', Incoming=' + IntToStr(gTabsIncoming)
-    + ', IncomingSpell=' + IntToStr(gTabsIncomingSpell) + '/spell ' + IntToStr(gSpellTabIncomingSpell));
+    + ', IncomingSpell=' + IntToStr(gTabsIncomingSpell) + '/spell ' + IntToStr(gSpellTabIncomingSpell)
+    + ' ' + gIncomingKwdFunc);
 end;
 
 //============================================================================
@@ -872,22 +894,26 @@ begin
     Exit;
   el := NewArrayChild(list, 'FormIDs');
   SetEditValue(el, HexOf(rec));
+  if not SameText(EditorID(LinksTo(el)), edid) then
+    Err(EditorID(list) + ': ' + edid + ' not added');
 end;
 
-procedure BuildKeywordAndList;
+// Метка призванного оружия и список «эндгейм»-призывов.
+// Эндгейм задаётся списком самих записей призыва (IsInList), а не ключевым
+// словом: призывы берут ключевые слова из общих шаблонов (EncAtronachFlame
+// и т. п.), и метка на шаблоне досталась бы и обычным атронахам.
+procedure BuildLists;
 begin
-  gKwdEndgame := NewRecord('KYWD', 'FHS_SummonEndgame');
+  gKwdBound := NewRecord('KYWD', 'FHS_BoundWeapon');
 
-  gBoundList := NewRecord('FLST', 'FHS_BoundWeapons');
-  AddToList(gBoundList, 'Skyrim.esm', $058F5F, 'BoundWeaponSword');
-  AddToList(gBoundList, 'Skyrim.esm', $0424F9, 'BoundWeaponSwordMystic');
-  AddToList(gBoundList, 'Skyrim.esm', $0BA30E, 'BoundWeaponSwordRightHand');
-  AddToList(gBoundList, 'Skyrim.esm', $058F5E, 'BoundWeaponBattleaxe');
-  AddToList(gBoundList, 'Skyrim.esm', $0424F7, 'BoundWeaponBattleaxeMystic');
-  AddToList(gBoundList, 'Skyrim.esm', $058F60, 'BoundWeaponBow');
-  AddToList(gBoundList, 'Skyrim.esm', $0424F8, 'BoundWeaponBowMystic');
-  AddToList(gBoundList, 'Dragonborn.esm', $01CE02, 'DLC2BoundWeaponDagger');
-  AddToList(gBoundList, 'Dragonborn.esm', $01CE03, 'DLC2BoundWeaponDaggerMystic');
+  gEndgameList := NewRecord('FLST', 'FHS_EndgameSummons');
+  AddToList(gEndgameList, 'Skyrim.esm', $07E87D, 'SummonAtronachFlameThrall');
+  AddToList(gEndgameList, 'Skyrim.esm', $0CDECC, 'SummonAtronachFlameThrallPotent');
+  AddToList(gEndgameList, 'Skyrim.esm', $07E87E, 'SummonAtronachFrostThrall');
+  AddToList(gEndgameList, 'Skyrim.esm', $0CDECD, 'SummonAtronachFrostThrallPotent');
+  AddToList(gEndgameList, 'Skyrim.esm', $07E87F, 'SummonAtronachStormThrall');
+  AddToList(gEndgameList, 'Skyrim.esm', $0CDECE, 'SummonAtronachStormThrallPotent');
+  AddToList(gEndgameList, 'Skyrim.esm', $10DDEE, 'SummonEncDremoraLord');
 end;
 
 function NewPerk(edid: string; fullName: string; desc: string): IInterface;
@@ -936,7 +962,7 @@ begin
   for i := 0 to DestrBandCount - 1 do begin
     e := NewEntry(gPlayerPerk, cEPAttack, gTabsAttack, BoundMilli(i));
     LevelBand(e, i);
-    Cond(CondTab(e, gWeaponTabAttack), 'IsInList', '==', 1, HexOf(gBoundList), False, False);
+    Cond(CondTab(e, gWeaponTabAttack), 'HasKeyword', '==', 1, HexOf(gKwdBound), False, False);
   end;
 
   Info('player perk: ' + IntToStr(gPriority) + ' entries');
@@ -953,7 +979,7 @@ begin
   Cond(pc, 'GetLevel', '>=', p, '', True, False);                        // уровень игрока
   Cond(pc, 'GetLevel', '<', p, '', False, False);                         // призыв ниже рубежа
   Cond(pc, 'GetLevel', '>=', SummonMinLevel(i), '', False, True);         // потолок 2x ...
-  Cond(pc, 'HasKeyword', '==', 1, HexOf(gKwdEndgame), False, False);        // ... или эндгейм
+  Cond(pc, 'IsInList', '==', 1, HexOf(gEndgameList), False, False);        // ... или эндгейм
   Cond(pc, 'IsCommandedActor', '==', 1, '', False, False);
   Cond(pc, 'IsHostileToActor', '==', 0, cPlayerRef, False, False);
 end;
@@ -1267,21 +1293,21 @@ begin
     Err('can not copy ' + EditorID(rec) + ' as override');
 end;
 
-// Счётчик (PRKZ, KSIZ) перед массивом в записи NPC.
-procedure SetCounter(npc: IInterface; sig: string; count: Integer);
+// Счётчик (PRKZ, KSIZ) перед массивом в записи.
+procedure SetCounter(rec: IInterface; sig: string; count: Integer);
 var
   el: IInterface;
 begin
-  el := FindSub(npc, sig, 0);
+  el := FindSub(rec, sig, 0);
   if not Assigned(el) then
-    el := Add(npc, sig, True);
+    el := Add(rec, sig, True);
   if not Assigned(el) then begin
-    Err(EditorID(npc) + ': can not create ' + sig);
+    Err(EditorID(rec) + ': can not create ' + sig);
     Exit;
   end;
   SetNativeValue(el, count);
   if GetNativeValue(el) <> count then
-    Err(EditorID(npc) + ': ' + sig + ' not set');
+    Err(EditorID(rec) + ': ' + sig + ' not set');
 end;
 
 function HasPerkEntry(npc: IInterface; perk: IInterface): Boolean;
@@ -1322,23 +1348,24 @@ begin
   SetCounter(npc, 'PRKZ', ElementCount(ElementByName(npc, 'Perks')));
 end;
 
-procedure AddKeywordToNpc(npc: IInterface; kwd: IInterface);
+// Ключевое слово kwd в запись rec (KWDA) со счётчиком KSIZ.
+procedure AddKeyword(rec: IInterface; kwd: IInterface);
 var
   kwda, k: IInterface;
   i: Integer;
 begin
-  kwda := FindSub(npc, 'KWDA', 1);
+  kwda := FindSub(rec, 'KWDA', 1);
   if not Assigned(kwda) then begin
-    k := ElementByName(npc, 'Keywords');
+    k := ElementByName(rec, 'Keywords');
     if not Assigned(k) then
-      k := Add(npc, 'Keywords', True);
+      k := Add(rec, 'Keywords', True);
     if IsSubrecord(k, 'KWDA') then
       kwda := k
     else if Assigned(k) then
       kwda := EnsureSub(k, 'KWDA');
   end;
   if not Assigned(kwda) then begin
-    Err('can not add keywords to ' + EditorID(npc));
+    Err('can not add keywords to ' + EditorID(rec));
     Exit;
   end;
   for i := 0 to ElementCount(kwda) - 1 do
@@ -1350,13 +1377,57 @@ begin
     k := ElementAssign(kwda, HighInteger, nil, False);
   SetEditValue(k, HexOf(kwd));
   if not SameText(EditorID(LinksTo(k)), EditorID(kwd)) then
-    Err(EditorID(npc) + ': keyword not added');
-  SetCounter(npc, 'KSIZ', ElementCount(kwda));
+    Err(EditorID(rec) + ': keyword not added');
+  SetCounter(rec, 'KSIZ', ElementCount(kwda));
 end;
 
-procedure PatchSummon(fileName: string; objectId: Integer; edid: string; endgame: Boolean);
+// Откуда NPC берёт данные по флагу шаблона bit (Use Traits 1, Use Stats 2):
+// шаблон-NPC или сам NPC. В отличие от DataSource ничего не пишет в журнал.
+function TemplateSource(npc: IInterface; bit: Integer): IInterface;
 var
-  npc, perkSrc, kwdSrc, o: IInterface;
+  tpl: IInterface;
+  depth: Integer;
+begin
+  Result := npc;
+  depth := 0;
+  while HasTemplateFlag(Result, bit) and (depth < 5) do begin
+    tpl := LinksTo(ElementBySignature(Result, 'TPLT'));
+    if not Assigned(tpl) then
+      Exit;
+    if Signature(tpl) <> 'NPC_' then
+      Exit;
+    Result := tpl;
+    depth := depth + 1;
+  end;
+end;
+
+// Уровень и здоровье призыва для журнала: с учётом шаблонов и флагов
+// PC Level Mult и Auto-calc stats. По этим данным сверяются таблицы спецификации.
+function SummonStats(npc: IInterface): string;
+var
+  src, race: IInterface;
+  flags: Integer;
+begin
+  src := TemplateSource(npc, 2);
+  flags := GetElementNativeValues(src, 'ACBS\Flags');
+  if HasTemplateFlag(src, 2) then
+    Result := 'level from leveled template'
+  else if ((flags div 128) mod 2) = 1 then
+    Result := 'level = player level x ' + GetElementEditValues(src, 'ACBS\Level')
+  else
+    Result := 'level ' + GetElementEditValues(src, 'ACBS\Level');
+  race := LinksTo(ElementBySignature(TemplateSource(npc, 1), 'RNAM'));
+  Result := Result + ', health ' + GetElementEditValues(race, 'DATA\Starting Health')
+    + ' + ' + GetElementEditValues(src, 'ACBS\Health Offset');
+  if ((flags div 16) mod 2) = 1 then
+    Result := Result + ' (auto-calc stats)';
+  if not SameText(EditorID(src), EditorID(npc)) then
+    Result := Result + ', stats from ' + EditorID(src);
+end;
+
+procedure PatchSummon(fileName: string; objectId: Integer; edid: string);
+var
+  npc, perkSrc, o: IInterface;
 begin
   npc := BaseRec(fileName, objectId, edid);
   if not Assigned(npc) then begin
@@ -1375,43 +1446,69 @@ begin
   if not SameText(EditorID(perkSrc), EditorID(npc)) then
     Info(edid + ': perk goes to template ' + EditorID(perkSrc));
 
-  if endgame then begin
-    kwdSrc := DataSource(npc, 4096);    // Template Flags: Keywords (бит 12)
-    o := OverrideInFile(kwdSrc);
-    if Assigned(o) then
-      AddKeywordToNpc(o, gKwdEndgame);
-    if not SameText(EditorID(kwdSrc), EditorID(npc)) then
-      Info(edid + ': keyword goes to template ' + EditorID(kwdSrc));
-  end;
-
-  Info('summon patched: ' + edid + ' (level ' + GetElementEditValues(npc, 'ACBS\Level') + ')');
+  Info('summon patched: ' + edid + ' (' + SummonStats(npc) + ')');
   gNpcPatched := gNpcPatched + 1;
 end;
 
 procedure PatchSummons;
 begin
-  PatchSummon('Skyrim.esm', $0640B5, 'EncSummonFamiliar', False);
-  PatchSummon('Skyrim.esm', $0204C0, 'SummonAtronachFlame', False);
-  PatchSummon('Skyrim.esm', $04E940, 'SummonAtronachFlamePotent', False);
-  PatchSummon('Skyrim.esm', $0204C1, 'SummonAtronachFrost', False);
-  PatchSummon('Skyrim.esm', $04E943, 'SummonAtronachFrostPotent', False);
-  PatchSummon('Skyrim.esm', $0204C2, 'SummonAtronachStorm', False);
-  PatchSummon('Skyrim.esm', $04E944, 'SummonAtronachStormPotent', False);
-  PatchSummon('Skyrim.esm', $07E87D, 'SummonAtronachFlameThrall', True);
-  PatchSummon('Skyrim.esm', $0CDECC, 'SummonAtronachFlameThrallPotent', True);
-  PatchSummon('Skyrim.esm', $07E87E, 'SummonAtronachFrostThrall', True);
-  PatchSummon('Skyrim.esm', $0CDECD, 'SummonAtronachFrostThrallPotent', True);
-  PatchSummon('Skyrim.esm', $07E87F, 'SummonAtronachStormThrall', True);
-  PatchSummon('Skyrim.esm', $0CDECE, 'SummonAtronachStormThrallPotent', True);
-  PatchSummon('Skyrim.esm', $10DDEE, 'SummonEncDremoraLord', True);
-  PatchSummon('Dawnguard.esm', $0045B9, 'DLC1SoulCairnBonemanSummon', False);
-  PatchSummon('Dawnguard.esm', $0045B7, 'DLC1SoulCairnMistmanSummon', False);
-  PatchSummon('Dawnguard.esm', $0045B4, 'DLC1SoulCairnWrathmanSummon', False);
-  PatchSummon('Dawnguard.esm', $016907, 'DLC1EncGargoyleSummon', False);
-  PatchSummon('Dragonborn.esm', $01EEC9, 'DLC2SummonSeeker', False);
-  PatchSummon('Dragonborn.esm', $030CDE, 'DLC2SummonSeekerHigh', False);
-  PatchSummon('Dragonborn.esm', $01CDF8, 'DLC2SummonAshSpawn01', False);
-  PatchSummon('Dragonborn.esm', $0177B6, 'DLC2SummonAshGuardian', False);
+  PatchSummon('Skyrim.esm', $0640B5, 'EncSummonFamiliar');
+  PatchSummon('Skyrim.esm', $0204C0, 'SummonAtronachFlame');
+  PatchSummon('Skyrim.esm', $04E940, 'SummonAtronachFlamePotent');
+  PatchSummon('Skyrim.esm', $0204C1, 'SummonAtronachFrost');
+  PatchSummon('Skyrim.esm', $04E943, 'SummonAtronachFrostPotent');
+  PatchSummon('Skyrim.esm', $0204C2, 'SummonAtronachStorm');
+  PatchSummon('Skyrim.esm', $04E944, 'SummonAtronachStormPotent');
+  PatchSummon('Skyrim.esm', $07E87D, 'SummonAtronachFlameThrall');
+  PatchSummon('Skyrim.esm', $0CDECC, 'SummonAtronachFlameThrallPotent');
+  PatchSummon('Skyrim.esm', $07E87E, 'SummonAtronachFrostThrall');
+  PatchSummon('Skyrim.esm', $0CDECD, 'SummonAtronachFrostThrallPotent');
+  PatchSummon('Skyrim.esm', $07E87F, 'SummonAtronachStormThrall');
+  PatchSummon('Skyrim.esm', $0CDECE, 'SummonAtronachStormThrallPotent');
+  PatchSummon('Skyrim.esm', $10DDEE, 'SummonEncDremoraLord');
+  PatchSummon('Dawnguard.esm', $0045B9, 'DLC1SoulCairnBonemanSummon');
+  PatchSummon('Dawnguard.esm', $0045B7, 'DLC1SoulCairnMistmanSummon');
+  PatchSummon('Dawnguard.esm', $0045B4, 'DLC1SoulCairnWrathmanSummon');
+  PatchSummon('Dawnguard.esm', $016907, 'DLC1EncGargoyleSummon');
+  PatchSummon('Dragonborn.esm', $01EEC9, 'DLC2SummonSeeker');
+  PatchSummon('Dragonborn.esm', $030CDE, 'DLC2SummonSeekerHigh');
+  PatchSummon('Dragonborn.esm', $01CDF8, 'DLC2SummonAshSpawn01');
+  PatchSummon('Dragonborn.esm', $0177B6, 'DLC2SummonAshGuardian');
+end;
+
+//============================================================================
+// C4. Призванное оружие: метка FHS_BoundWeapon
+//============================================================================
+
+// Ванильные перки проверяют оружие на вкладке Weapon через HasKeyword
+// (Armsman00), поэтому помечаем призванное оружие ключевым словом.
+procedure MarkBoundWeapon(fileName: string; objectId: Integer; edid: string);
+var
+  w, o: IInterface;
+begin
+  w := BaseRec(fileName, objectId, edid);
+  if not Assigned(w) then
+    Exit;
+  o := OverrideInFile(w);
+  if Assigned(o) then begin
+    AddKeyword(o, gKwdBound);
+    gWeaponsMarked := gWeaponsMarked + 1;
+  end;
+end;
+
+procedure MarkBoundWeapons;
+begin
+  gWeaponsMarked := 0;
+  MarkBoundWeapon('Skyrim.esm', $058F5F, 'BoundWeaponSword');
+  MarkBoundWeapon('Skyrim.esm', $0424F9, 'BoundWeaponSwordMystic');
+  MarkBoundWeapon('Skyrim.esm', $0BA30E, 'BoundWeaponSwordRightHand');
+  MarkBoundWeapon('Skyrim.esm', $058F5E, 'BoundWeaponBattleaxe');
+  MarkBoundWeapon('Skyrim.esm', $0424F7, 'BoundWeaponBattleaxeMystic');
+  MarkBoundWeapon('Skyrim.esm', $058F60, 'BoundWeaponBow');
+  MarkBoundWeapon('Skyrim.esm', $0424F8, 'BoundWeaponBowMystic');
+  MarkBoundWeapon('Dragonborn.esm', $01CE02, 'DLC2BoundWeaponDagger');
+  MarkBoundWeapon('Dragonborn.esm', $01CE03, 'DLC2BoundWeaponDaggerMystic');
+  Info('bound weapons marked: ' + IntToStr(gWeaponsMarked));
 end;
 
 // Сверка: какие существа на самом деле призывают заклинания игрока.
@@ -1508,13 +1605,14 @@ begin
   end;
 
   DetectTabs;
-  BuildKeywordAndList;
+  BuildLists;
   BuildPlayerPerk;
   BuildSummonPerk;
   BuildEffects;
   BuildAbility;
   BuildQuest;
   PatchSummons;
+  MarkBoundWeapons;
   CheckSummonSpells;
   SortMasters(gFile);
 

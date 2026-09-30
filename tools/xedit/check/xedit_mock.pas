@@ -986,7 +986,7 @@ function DecideParam1(n: TNode): Integer;
 begin
   case Integer(KidByName(n.Parent, 'Function').Value) of
     277, 696: Result := 1;                       // GetBaseActorValue, EPMagic_SpellHasSkill
-    372, 448, 560, 693, 699, 719: Result := 2;   // IsInList, HasPerk, HasKeyword, EPMagic_SpellHasKeyword, HasMagicEffectKeyword, IsHostileToActor
+    182, 372, 448, 560, 693, 699, 719: Result := 2;   // WornHasKeyword, IsInList, HasPerk, HasKeyword, EPMagic_SpellHasKeyword, HasMagicEffectKeyword, IsHostileToActor
   else
     Result := 0;
   end;
@@ -1081,7 +1081,7 @@ end;
 
 function FunctionEnum: TDef;
 begin
-  Result := VEnum('Function', ['GetWantBlocking=0', 'GetLevel=80', 'IsBlocking=250',
+  Result := VEnum('Function', ['GetWantBlocking=0', 'GetLevel=80', 'WornHasKeyword=182', 'IsBlocking=250',
     'GetBaseActorValue=277', 'IsInList=372', 'HasPerk=448', 'HasKeyword=560',
     'EPMagic_SpellHasKeyword=693', 'EPMagic_SpellHasSkill=696', 'HasMagicEffectKeyword=699',
     'IsCommandedActor=700', 'IsHostileToActor=719']);
@@ -1118,15 +1118,17 @@ var
   perkEffect, epData, fp, spellEffect, refAlias, locAlias: TDef;
 begin
   DefRecord('KYWD', [Sub('EDID', 'Editor ID', VStr(''), False)]);
-  DefRecord('WEAP', [Sub('EDID', 'Editor ID', VStr(''), False)]);
+  DefRecord('WEAP', [Sub('EDID', 'Editor ID', VStr(''), False), Sub('KSIZ', 'Keyword Count', VInt(''), False), KWDA]);
   DefRecord('ACHR', [Sub('EDID', 'Editor ID', VStr(''), False)]);
+  DefRecord('RACE', [Sub('EDID', 'Editor ID', VStr(''), False),
+    Sub('DATA', '', VStruct('', [VFloat('Starting Health'), VFloat('Starting Magicka')]), True)]);
   DefRecord('FLST', [Sub('EDID', 'Editor ID', VStr(''), True),
     RArray('FormIDs', Sub('LNAM', 'FormID', VFormID(''), False), False)]);
 
   // PERK
   epData := VStruct('Entry Point', [
     VEnum('Entry Point', ['Calculate Weapon Damage=0', 'Mod Spell Magnitude=29', 'Mod Attack Damage=35',
-      'Mod Incoming Damage=36', 'Mod Incoming Spell Magnitude=41']),
+      'Mod Incoming Damage=36', 'Mod Spell Cost=38', 'Mod Incoming Spell Magnitude=41']),
     VEnum('Function', ['Unknown 0=0', 'Set Value=1', 'Add Value=2', 'Multiply Value=3',
       'Add Range To Value=4', 'Add Actor Value Mult=5']),
     VInt('Perk Condition Tab Count')]);
@@ -1656,27 +1658,57 @@ begin
   Result := IntfOf(RecordByLoadOrderId(StrToInt64('$' + VanId(fileName, objectId))));
 end;
 
-// Запись перка-образца: точка входа, число вкладок и одно условие на вкладке tab.
-procedure VanPerkEntry(perk: IInterface; const ep: string; tabs, tab: Integer; const func, param: string);
-var
-  eff, pcs, pc, ctda: IInterface;
+// Запись перка-образца: точка входа и число вкладок.
+function VanPerkEntry(perk: IInterface; const ep: string; tabs: Integer): IInterface;
 begin
-  eff := ElementByIndex(Add(perk, 'Effects', True), 0);
-  SetElementNativeValues(eff, 'PRKE\Type', 2);
-  SetElementEditValues(eff, 'DATA\Entry Point\Entry Point', ep);
-  SetElementEditValues(eff, 'DATA\Entry Point\Function', 'Multiply Value');
-  SetElementNativeValues(eff, 'DATA\Entry Point\Perk Condition Tab Count', tabs);
-  SetNativeValue(ElementByPath(eff, 'Function Parameters\EPFT'), 1);
-  if func = '' then
-    Exit;
-  pcs := ElementAssign(eff, 2, nil, False);
-  pc := ElementByIndex(pcs, 0);
-  SetElementNativeValues(pc, 'PRKC', tab);
-  ctda := ElementBySignature(ElementByIndex(ElementByName(pc, 'Conditions'), 0), 'CTDA');
+  Result := ElementByIndex(Add(perk, 'Effects', True), 0);
+  SetElementNativeValues(Result, 'PRKE\Type', 2);
+  SetElementEditValues(Result, 'DATA\Entry Point\Entry Point', ep);
+  SetElementEditValues(Result, 'DATA\Entry Point\Function', 'Multiply Value');
+  SetElementNativeValues(Result, 'DATA\Entry Point\Perk Condition Tab Count', tabs);
+  SetNativeValue(ElementByPath(Result, 'Function Parameters\EPFT'), 1);
+end;
+
+// Условие на вкладке tab записи перка-образца (type: 0 — AND, 1 — OR).
+procedure VanCond(eff: IInterface; tab: Integer; const func, param: string; value, ctype: Integer);
+var
+  pcs, pc, cond, ctda: IInterface;
+  i: Integer;
+begin
+  pc := nil;
+  pcs := ElementByName(eff, 'Perk Conditions');
+  if not Assigned(pcs) then begin
+    pcs := ElementAssign(eff, 2, nil, False);
+    pc := ElementByIndex(pcs, 0);
+    SetElementNativeValues(pc, 'PRKC', tab);
+    cond := ElementByIndex(ElementByName(pc, 'Conditions'), 0);
+  end else begin
+    for i := 0 to ElementCount(pcs) - 1 do
+      if GetElementNativeValues(ElementByIndex(pcs, i), 'PRKC') = tab then
+        pc := ElementByIndex(pcs, i);
+    if Assigned(pc) then
+      cond := ElementAssign(ElementByName(pc, 'Conditions'), HighInteger, nil, False)
+    else begin
+      pc := ElementAssign(pcs, HighInteger, nil, False);
+      SetElementNativeValues(pc, 'PRKC', tab);
+      cond := ElementByIndex(ElementByName(pc, 'Conditions'), 0);
+    end;
+  end;
+  ctda := ElementBySignature(cond, 'CTDA');
   SetElementEditValues(ctda, 'Function', func);
-  SetElementNativeValues(ctda, 'Comparison Value', 1);
+  SetElementNativeValues(ctda, 'Type', ctype);
+  SetElementNativeValues(ctda, 'Comparison Value', value);
   if param <> '' then
     SetElementEditValues(ctda, 'Parameter #1', param);
+end;
+
+procedure VanTemplate(const fileName: string; objectId: Cardinal; flags: Integer; const tplFile: string; tplId: Cardinal);
+var
+  npc: IInterface;
+begin
+  npc := VanRec(fileName, objectId);
+  SetElementNativeValues(npc, 'ACBS\Template Flags', flags);
+  SetEditValue(Add(npc, 'TPLT', True), VanId(tplFile, tplId));
 end;
 
 procedure VanNpc(const fileName: string; objectId: Cardinal; const edid: string; level: Integer; withPerk: Boolean);
@@ -1685,6 +1717,8 @@ var
 begin
   npc := Van(fileName, objectId, 'NPC_', edid);
   SetElementNativeValues(npc, 'ACBS\Level', level);
+  SetElementNativeValues(npc, 'ACBS\Health Offset', 10);
+  SetEditValue(ElementBySignature(npc, 'RNAM'), VanId('Skyrim.esm', $0131F5));
   kw := Add(npc, 'KWDA', True);
   SetEditValue(Add(kw, 'Keyword', True), VanId('Skyrim.esm', $013797));
   SetNativeValue(Add(npc, 'KSIZ', True), 1);
@@ -1709,9 +1743,20 @@ begin
     HexId(GetLoadOrderFormID(mgef)));
 end;
 
+procedure VanWeapon(const fileName: string; objectId: Cardinal; const edid: string; withKeyword: Boolean);
+var
+  w: IInterface;
+begin
+  w := Van(fileName, objectId, 'WEAP', edid);
+  if withKeyword then begin
+    SetEditValue(Add(Add(w, 'KWDA', True), 'Keyword', True), VanId('Skyrim.esm', $01E711));
+    SetNativeValue(Add(w, 'KSIZ', True), 1);
+  end;
+end;
+
 procedure BuildVanilla;
 var
-  p, npc: IInterface;
+  p, e: IInterface;
 begin
   NewFile('Skyrim.esm', []);
   NewFile('Update.esm', ['Skyrim.esm']);
@@ -1719,61 +1764,83 @@ begin
   NewFile('Dragonborn.esm', ['Skyrim.esm', 'Update.esm']);
 
   Van('Skyrim.esm', $000014, 'ACHR', 'PlayerRef');
+  SetElementNativeValues(Van('Skyrim.esm', $0131F5, 'RACE', 'AtronachFlameRace'), 'DATA\Starting Health', 100);
   Van('Skyrim.esm', $01CEAD, 'KYWD', 'MagicDamageFire');
   Van('Skyrim.esm', $01CEAE, 'KYWD', 'MagicDamageFrost');
   Van('Skyrim.esm', $01CEAF, 'KYWD', 'MagicDamageShock');
   Van('Skyrim.esm', $101BDE, 'KYWD', 'MagicVampireDrain');
   Van('Skyrim.esm', $013797, 'KYWD', 'ActorTypeDaedra');
+  Van('Skyrim.esm', $01E711, 'KYWD', 'WeapTypeSword');
+  Van('Skyrim.esm', $0965B2, 'KYWD', 'ArmorShield');
   Van('Skyrim.esm', $0C44C2, 'PERK', 'DestructionMaster100');
   Van('Skyrim.esm', $0C44BE, 'PERK', 'ConjurationMaster100');
+  Van('Skyrim.esm', $10FCF8, 'PERK', 'AugmentedFlames60');
 
+  // Условия ванильных перков — как в журнале настоящей сборки в SSEEdit 4.1.5f.
   p := Van('Skyrim.esm', $0581E7, 'PERK', 'AugmentedFlames');
-  VanPerkEntry(p, 'Mod Spell Magnitude', 3, 1, 'EPMagic_SpellHasKeyword', VanId('Skyrim.esm', $01CEAD));
+  e := VanPerkEntry(p, 'Mod Spell Magnitude', 3);
+  VanCond(e, 0, 'HasPerk', VanId('Skyrim.esm', $10FCF8), 0, 0);
+  VanCond(e, 1, 'EPMagic_SpellHasKeyword', VanId('Skyrim.esm', $01CEAD), 1, 0);
   p := Van('Skyrim.esm', $0BABE4, 'PERK', 'Armsman00');
-  VanPerkEntry(p, 'Mod Attack Damage', 3, 0, '', '');
+  e := VanPerkEntry(p, 'Mod Attack Damage', 3);
+  VanCond(e, 1, 'HasKeyword', VanId('Skyrim.esm', $01E711), 1, 1);
   p := Van('Skyrim.esm', $1046BD, 'PERK', 'crDragonResistNPCs');
-  VanPerkEntry(p, 'Mod Incoming Damage', 3, 0, '', '');
+  VanPerkEntry(p, 'Mod Incoming Damage', 3);
   Van('Skyrim.esm', $109639, 'PERK', 'DragonhideSpellPerk');
-  // Как в журнале пользователя: 2 вкладки, EPMagic_SpellHasKeyword не найдена.
   p := Van('Skyrim.esm', $058F69, 'PERK', 'ElementalProtection');
-  VanPerkEntry(p, 'Mod Incoming Spell Magnitude', 2, 0, 'IsBlocking', '');
+  e := VanPerkEntry(p, 'Mod Incoming Spell Magnitude', 2);
+  VanCond(e, 0, 'WornHasKeyword', VanId('Skyrim.esm', $0965B2), 1, 0);
+  VanCond(e, 0, 'IsBlocking', '', 1, 0);
+  VanCond(e, 1, 'HasKeyword', VanId('Skyrim.esm', $01CEAD), 1, 1);
+  VanCond(e, 1, 'HasKeyword', VanId('Skyrim.esm', $01CEAE), 1, 1);
+  VanCond(e, 1, 'HasKeyword', VanId('Skyrim.esm', $01CEAF), 1, 1);
+  p := Van('Skyrim.esm', $0F2CA8, 'PERK', 'DestructionNovice00');
+  e := VanPerkEntry(p, 'Mod Spell Cost', 2);
+  VanCond(e, 1, 'EPMagic_SpellHasSkill', 'Destruction', 1, 0);
 
-  Van('Skyrim.esm', $058F5F, 'WEAP', 'BoundWeaponSword');
-  Van('Skyrim.esm', $0424F9, 'WEAP', 'BoundWeaponSwordMystic');
-  Van('Skyrim.esm', $0BA30E, 'WEAP', 'BoundWeaponSwordRightHand');
-  Van('Skyrim.esm', $058F5E, 'WEAP', 'BoundWeaponBattleaxe');
-  Van('Skyrim.esm', $0424F7, 'WEAP', 'BoundWeaponBattleaxeMystic');
-  Van('Skyrim.esm', $058F60, 'WEAP', 'BoundWeaponBow');
-  Van('Skyrim.esm', $0424F8, 'WEAP', 'BoundWeaponBowMystic');
-  Van('Dragonborn.esm', $01CE02, 'WEAP', 'DLC2BoundWeaponDagger');
-  Van('Dragonborn.esm', $01CE03, 'WEAP', 'DLC2BoundWeaponDaggerMystic');
+  VanWeapon('Skyrim.esm', $058F5F, 'BoundWeaponSword', True);
+  VanWeapon('Skyrim.esm', $0424F9, 'BoundWeaponSwordMystic', True);
+  VanWeapon('Skyrim.esm', $0BA30E, 'BoundWeaponSwordRightHand', True);
+  VanWeapon('Skyrim.esm', $058F5E, 'BoundWeaponBattleaxe', True);
+  VanWeapon('Skyrim.esm', $0424F7, 'BoundWeaponBattleaxeMystic', True);
+  VanWeapon('Skyrim.esm', $058F60, 'BoundWeaponBow', True);
+  VanWeapon('Skyrim.esm', $0424F8, 'BoundWeaponBowMystic', True);
+  VanWeapon('Dragonborn.esm', $01CE02, 'DLC2BoundWeaponDagger', True);
+  VanWeapon('Dragonborn.esm', $01CE03, 'DLC2BoundWeaponDaggerMystic', False);
 
-  VanNpc('Skyrim.esm', $0640B5, 'EncSummonFamiliar', 6, False);
+  // Общие шаблоны, из которых призывы берут список заклинаний (как в журнале).
+  VanNpc('Skyrim.esm', $023AA6, 'EncAtronachFlame', 5, False);
+  VanNpc('Skyrim.esm', $023AA7, 'EncAtronachFrost', 16, False);
+  VanNpc('Skyrim.esm', $016FF8, 'EncDremoraMelee06', 46, True);
+
+  VanNpc('Skyrim.esm', $0640B5, 'EncSummonFamiliar', 2, False);
   VanNpc('Skyrim.esm', $0204C0, 'SummonAtronachFlame', 5, False);
-  VanNpc('Skyrim.esm', $04E940, 'SummonAtronachFlamePotent', 5, False);
-  VanNpc('Skyrim.esm', $0204C1, 'SummonAtronachFrost', 13, False);
-  VanNpc('Skyrim.esm', $04E943, 'SummonAtronachFrostPotent', 13, False);
-  VanNpc('Skyrim.esm', $0204C2, 'SummonAtronachStorm', 18, False);
-  VanNpc('Skyrim.esm', $04E944, 'SummonAtronachStormPotent', 18, False);
-  VanNpc('Skyrim.esm', $07E87D, 'SummonAtronachFlameThrall', 5, False);
-  VanNpc('Skyrim.esm', $0CDECC, 'SummonAtronachFlameThrallPotent', 5, False);
-  VanNpc('Skyrim.esm', $07E87E, 'SummonAtronachFrostThrall', 13, False);
-  VanNpc('Skyrim.esm', $0CDECD, 'SummonAtronachFrostThrallPotent', 13, False);
-  VanNpc('Skyrim.esm', $07E87F, 'SummonAtronachStormThrall', 18, False);
-  VanNpc('Skyrim.esm', $0CDECE, 'SummonAtronachStormThrallPotent', 18, False);
-  VanNpc('Skyrim.esm', $10DDEE, 'SummonEncDremoraLord', 25, True);
-  VanNpc('Dawnguard.esm', $0045B9, 'DLC1SoulCairnBonemanSummon', 20, False);
-  VanNpc('Dawnguard.esm', $0045B7, 'DLC1SoulCairnMistmanSummon', 20, False);
-  VanNpc('Dawnguard.esm', $0045B4, 'DLC1SoulCairnWrathmanSummon', 20, False);
-  VanNpc('Dawnguard.esm', $016907, 'DLC1EncGargoyleSummon', 20, False);
-  VanNpc('Dragonborn.esm', $01EEC9, 'DLC2SummonSeeker', 20, False);
-  VanNpc('Dragonborn.esm', $030CDE, 'DLC2SummonSeekerHigh', 30, False);
-  VanNpc('Dragonborn.esm', $01CDF8, 'DLC2SummonAshSpawn01', 15, False);
-  VanNpc('Dragonborn.esm', $0177B6, 'DLC2SummonAshGuardian', 15, False);
-  // Сильный Искатель берёт список заклинаний (и перки) из обычного.
-  npc := VanRec('Dragonborn.esm', $030CDE);
-  SetElementNativeValues(npc, 'ACBS\Template Flags', 8);
-  SetEditValue(Add(npc, 'TPLT', True), VanId('Dragonborn.esm', $01EEC9));
+  VanNpc('Skyrim.esm', $04E940, 'SummonAtronachFlamePotent', 10, False);
+  VanNpc('Skyrim.esm', $0204C1, 'SummonAtronachFrost', 16, False);
+  VanNpc('Skyrim.esm', $04E943, 'SummonAtronachFrostPotent', 24, False);
+  VanNpc('Skyrim.esm', $0204C2, 'SummonAtronachStorm', 30, False);
+  VanNpc('Skyrim.esm', $04E944, 'SummonAtronachStormPotent', 35, False);
+  VanNpc('Skyrim.esm', $07E87D, 'SummonAtronachFlameThrall', 30, False);
+  VanNpc('Skyrim.esm', $0CDECC, 'SummonAtronachFlameThrallPotent', 35, False);
+  VanNpc('Skyrim.esm', $07E87E, 'SummonAtronachFrostThrall', 30, False);
+  VanNpc('Skyrim.esm', $0CDECD, 'SummonAtronachFrostThrallPotent', 35, False);
+  VanNpc('Skyrim.esm', $07E87F, 'SummonAtronachStormThrall', 30, False);
+  VanNpc('Skyrim.esm', $0CDECE, 'SummonAtronachStormThrallPotent', 35, False);
+  VanNpc('Skyrim.esm', $10DDEE, 'SummonEncDremoraLord', 1, False);
+  VanNpc('Dawnguard.esm', $0045B9, 'DLC1SoulCairnBonemanSummon', 6, False);
+  VanNpc('Dawnguard.esm', $0045B7, 'DLC1SoulCairnMistmanSummon', 13, False);
+  VanNpc('Dawnguard.esm', $0045B4, 'DLC1SoulCairnWrathmanSummon', 30, False);
+  VanNpc('Dawnguard.esm', $016907, 'DLC1EncGargoyleSummon', 13, False);
+  VanNpc('Dragonborn.esm', $01EEC9, 'DLC2SummonSeeker', 21, False);
+  VanNpc('Dragonborn.esm', $030CDE, 'DLC2SummonSeekerHigh', 42, False);
+  VanNpc('Dragonborn.esm', $01CDF8, 'DLC2SummonAshSpawn01', 20, False);
+  VanNpc('Dragonborn.esm', $0177B6, 'DLC2SummonAshGuardian', 30, False);
+  VanTemplate('Skyrim.esm', $0204C0, 8, 'Skyrim.esm', $023AA6);            // Use Spell List
+  VanTemplate('Skyrim.esm', $04E940, 8, 'Skyrim.esm', $023AA6);
+  VanTemplate('Skyrim.esm', $04E943, 8, 'Skyrim.esm', $023AA7);
+  VanTemplate('Skyrim.esm', $07E87D, 4096, 'Skyrim.esm', $023AA6);         // Use Keywords
+  VanTemplate('Skyrim.esm', $10DDEE, 8 + 2 + 4096, 'Skyrim.esm', $016FF8);  // + Use Stats
+  VanTemplate('Dragonborn.esm', $030CDE, 8, 'Dragonborn.esm', $01EEC9);
 
   VanSpell('Skyrim.esm', $0640B6, 'ConjureFamiliar', 'Skyrim.esm', $0640B5);
   VanSpell('Skyrim.esm', $0204C3, 'ConjureFlameAtronach', 'Skyrim.esm', $0204C0);
@@ -1949,6 +2016,14 @@ end;
 const
   Elemental = 'EPMagic_SpellHasKeyword(MagicDamageFire) 1 1, EPMagic_SpellHasKeyword(MagicDamageFrost) 1 1, '
     + 'EPMagic_SpellHasKeyword(MagicDamageShock) 1 1, EPMagic_SpellHasKeyword(MagicVampireDrain) 0 1';
+  IncomingElemental = 'HasKeyword(MagicDamageFire) 1 1, HasKeyword(MagicDamageFrost) 1 1, '
+    + 'HasKeyword(MagicDamageShock) 1 1, HasKeyword(MagicVampireDrain) 0 1';
+  Weapons: array[0..8] of string = ('BoundWeaponSword', 'BoundWeaponSwordMystic', 'BoundWeaponSwordRightHand',
+    'BoundWeaponBattleaxe', 'BoundWeaponBattleaxeMystic', 'BoundWeaponBow', 'BoundWeaponBowMystic',
+    'DLC2BoundWeaponDagger', 'DLC2BoundWeaponDaggerMystic');
+  Endgame: array[0..6] of string = ('SummonAtronachFlameThrall', 'SummonAtronachFlameThrallPotent',
+    'SummonAtronachFrostThrall', 'SummonAtronachFrostThrallPotent', 'SummonAtronachStormThrall',
+    'SummonAtronachStormThrallPotent', 'SummonEncDremoraLord');
   Summons: array[0..21] of string = ('EncSummonFamiliar', 'SummonAtronachFlame', 'SummonAtronachFlamePotent',
     'SummonAtronachFrost', 'SummonAtronachFrostPotent', 'SummonAtronachStorm', 'SummonAtronachStormPotent',
     'SummonAtronachFlameThrall', 'SummonAtronachFlameThrallPotent', 'SummonAtronachFrostThrall',
@@ -1957,10 +2032,30 @@ const
     'DLC1SoulCairnWrathmanSummon', 'DLC1EncGargoyleSummon', 'DLC2SummonSeeker', 'DLC2SummonSeekerHigh',
     'DLC2SummonAshSpawn01', 'DLC2SummonAshGuardian');
 
+function VanByEdid(const edid: string): TNode;
+var
+  k: Integer;
+begin
+  Result := nil;
+  for k := 0 to Registry.Count - 1 do
+    if TNode(Registry.Objects[k]).Edid = edid then
+      Exit(TNode(Registry.Objects[k]));
+end;
+
+function LogHas(const text: string): Boolean;
+var
+  k: Integer;
+begin
+  Result := False;
+  for k := 0 to Messages.Count - 1 do
+    if Pos(text, Messages[k]) > 0 then
+      Exit(True);
+end;
+
 procedure VerifyGenerated;
 var
   perk, sperk, e, mgef, data, spell, eff, quest, alias, npc, src, spells, kw: TNode;
-  k, i, withKw: Integer;
+  k, i: Integer;
   allOk: Boolean;
   s: string;
 begin
@@ -1975,14 +2070,25 @@ begin
   Check(MessagesWarnings = 0, 'no WARNING lines in the log');
   Check(Plugin.Masters.Count = 4, 'four masters');
 
-  Check(Assigned(RecByEdid('KYWD', 'FHS_SummonEndgame')), 'keyword FHS_SummonEndgame');
-  e := RecByEdid('FLST', 'FHS_BoundWeapons');
-  allOk := Assigned(e) and (Kids(e, 'FormIDs') = 9);
+  Check(Assigned(RecByEdid('KYWD', 'FHS_BoundWeapon')) and not Assigned(RecByEdid('KYWD', 'FHS_SummonEndgame')),
+    'keyword FHS_BoundWeapon, no endgame keyword');
+  allOk := True;
+  for i := 0 to High(Weapons) do begin
+    npc := NodeOf(WinningOverride(IntfOf(VanByEdid(Weapons[i]))));
+    kw := KidBySig(npc, 'KWDA');
+    if (FileOf(npc) <> Plugin) or not HasLink(kw, '', 'FHS_BoundWeapon') or (Nat(npc, 'KSIZ') <> kw.Kids.Count) then begin
+      allOk := False;
+      WriteLn('     not marked: ', Weapons[i]);
+    end;
+  end;
+  Check(allOk, 'all 9 bound weapons carry FHS_BoundWeapon, KSIZ matches');
+  e := RecByEdid('FLST', 'FHS_EndgameSummons');
+  allOk := Assigned(e) and (Kids(e, 'FormIDs') = 7);
   if allOk then
-    for k := 0 to 8 do
-      if not Assigned(LinksTo(IntfOf(KidByName(e, 'FormIDs').Kid(k)))) then
+    for k := 0 to 6 do
+      if FirstWord(NodeEdit(KidByName(e, 'FormIDs').Kid(k))) <> Endgame[k] then
         allOk := False;
-  Check(allOk, 'bound weapons list: 9 resolvable weapons');
+  Check(allOk, 'endgame list: the 6 thralls and the Dremora Lord records themselves');
 
   // Перк игрока: D1 (11) + D2 (1) + C3 (11) + C4 (11)
   perk := RecByEdid('PERK', 'FHS_Attunement');
@@ -2007,8 +2113,8 @@ begin
   Check(EntryOk(e, 'Mod Spell Magnitude', 3, 1.18) and (TabConds(e, 1) = 'EPMagic_SpellHasSkill(Conjuration) 0 1'),
     'C3 conjuration level limits');
   e := Entry(perk, 23);
-  Check(EntryOk(e, 'Mod Attack Damage', 3, 1.06) and (TabConds(e, 1) = 'IsInList(FHS_BoundWeapons) 0 1'),
-    'C4 bound weapons');
+  Check(EntryOk(e, 'Mod Attack Damage', 3, 1.06) and (TabConds(e, 1) = 'HasKeyword(FHS_BoundWeapon) 0 1'),
+    'C4 bound weapons: HasKeyword on the Weapon tab, like vanilla Armsman');
 
   // Перк призывов: 15 рубежей x 4 точки входа + 4 записи C2
   sperk := RecByEdid('PERK', 'FHS_SummonAttunement');
@@ -2018,7 +2124,7 @@ begin
   for k := 0 to 59 do begin
     s := TabConds(Entry(sperk, k), 0);
     if (Pos('GetLevel 96 ', s) <> 1) or (Pos(' @PlayerRef, GetLevel 128 ', s) = 0) or (Pos(', GetLevel 97 ', s) = 0)
-       or (Pos('HasKeyword(FHS_SummonEndgame) 0 1, IsCommandedActor 0 1, IsHostileToActor(PlayerRef) 0 0', s) = 0) then
+       or (Pos('IsInList(FHS_EndgameSummons) 0 1, IsCommandedActor 0 1, IsHostileToActor(PlayerRef) 0 0', s) = 0) then
       allOk := False;
   end;
   Check(allOk, 'every milestone: player>=P AND own<P AND (own>=P/2 OR endgame) AND commanded AND not hostile');
@@ -2027,8 +2133,10 @@ begin
   Check(EntryOk(Entry(sperk, 1), 'Mod Spell Magnitude', 3, 1.625), 'first milestone: spells x1.625');
   Check(EntryOk(Entry(sperk, 2), 'Mod Incoming Damage', 3, 0.615), 'first milestone: incoming damage x0.615');
   e := Entry(sperk, 3);
-  Check(EntryOk(e, 'Mod Incoming Spell Magnitude', 2, 0.615) and (TabConds(e, 1) = Elemental),
-    'first milestone: incoming elemental spells x0.615 on the Spell tab (1)');
+  Check(EntryOk(e, 'Mod Incoming Spell Magnitude', 2, 0.615) and (TabConds(e, 1) = IncomingElemental),
+    'first milestone: incoming elemental spells x0.615, HasKeyword on the Spell tab like vanilla Block');
+  if TabConds(e, 1) <> IncomingElemental then
+    WriteLn('     got: ', TabConds(e, 1));
   e := Entry(sperk, 60);
   Check(EntryOk(e, 'Mod Attack Damage', 3, 1.2)
     and (TabConds(e, 0) = 'HasPerk(ConjurationMaster100) 0 1 @PlayerRef, GetBaseActorValue(Conjuration) 96 100 @PlayerRef, '
@@ -2077,13 +2185,9 @@ begin
 
   // Призывы
   allOk := True;
-  withKw := 0;
   for i := 0 to High(Summons) do begin
-    src := nil;
-    for k := 0 to Registry.Count - 1 do
-      if TNode(Registry.Objects[k]).Edid = Summons[i] then
-        src := TNode(Registry.Objects[k]);
-    if Nat(src, 'ACBS\Template Flags') = 8 then
+    src := VanByEdid(Summons[i]);
+    if (Integer(Nat(src, 'ACBS\Template Flags')) and 8) <> 0 then
       src := NodeOf(LinksTo(IntfOf(KidBySig(src, 'TPLT'))));
     npc := NodeOf(WinningOverride(IntfOf(src)));
     if (FileOf(npc) <> Plugin) or not HasLink(KidByName(npc, 'Perks'), 'Perk', 'FHS_SummonAttunement')
@@ -2091,17 +2195,20 @@ begin
       allOk := False;
       WriteLn('     not patched: ', Summons[i]);
     end;
-    kw := KidBySig(npc, 'KWDA');
-    if (FileOf(npc) = Plugin) and HasLink(kw, '', 'FHS_SummonEndgame') then begin
-      Inc(withKw);
-      if Nat(npc, 'KSIZ') <> kw.Kids.Count then
-        allOk := False;
+    if Assigned(KidBySig(npc, 'KWDA')) and (KidBySig(npc, 'KWDA').Kids.Count <> 1) then begin
+      allOk := False;
+      WriteLn('     keywords changed: ', Summons[i]);
     end;
   end;
-  Check(allOk, 'all 22 summons (or their templates) carry the summon perk, PRKZ/KSIZ match');
-  Check(withKw = 7, 'seven endgame summons get the keyword (' + IntToStr(withKw) + ')');
-  npc := NodeOf(WinningOverride(VanRec('Skyrim.esm', $10DDEE)));
-  Check(Kids(npc, 'Perks') = 2, 'Dremora Lord keeps its own perk and gets ours');
+  Check(allOk, 'all 22 summons (or their spell-list templates) carry the summon perk, PRKZ matches, keywords untouched');
+  npc := NodeOf(WinningOverride(IntfOf(VanByEdid('EncDremoraMelee06'))));
+  Check(Kids(npc, 'Perks') = 2, 'Dremora Lord template keeps its own perk and gets ours');
+  npc := NodeOf(WinningOverride(IntfOf(VanByEdid('EncAtronachFlame'))));
+  Check(Kids(npc, 'Perks') = 1, 'shared template EncAtronachFlame gets the perk once');
+  Check(LogHas('summon patched: SummonEncDremoraLord (level 46, health 100.000000 + 10, stats from EncDremoraMelee06)'),
+    'log shows effective level and health from the stats template');
+  Check(LogHas('bound weapons marked: 9'), 'log: bound weapons marked: 9');
+  Check(LogHas('vanilla DestructionNovice00 / Mod Spell Cost'), 'log: DestructionNovice00 dump');
 
   WriteLn;
   if Failures = 0 then
